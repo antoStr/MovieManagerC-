@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="MovieManager.DAL/MovieManager.DAL.csproj" />
+  <Project Path="MovieManager.BLL/MovieManager.BLL.csproj" />
+  <Project Path="MovieManager.PL.API/MovieManager.PL.API.csproj" />
+</Solution>

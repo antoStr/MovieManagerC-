@@ -1,0 +1,15 @@
+# Build output
+bin/
+obj/
+
+# Visual Studio
+.vs/
+*.user
+
+# Rider / VS Code
+.idea/
+.vscode/
+
+# LocalDB / test artifacts
+*.mdf
+*.ldf
