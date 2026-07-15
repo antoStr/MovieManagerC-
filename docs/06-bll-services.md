@@ -228,4 +228,6 @@ Praticamente ogni metodo di service e repository è **asincrono**. Vale la pena 
 
 In un'applicazione web, dove arrivano molte richieste contemporanee, l'approccio asincrono migliora nettamente la **scalabilità**. Per questo tutto il progetto usa `...Async` + `await`. Il `CancellationToken` che passo ovunque completa il quadro: se il client annulla la richiesta, l'operazione può fermarsi invece di sprecare risorse.
 
+📖 **Questa è la versione in pillole. L'approfondimento vero e proprio — cosa genera davvero il compilatore a ogni `await`, perché `AddAsync` non aspetta niente, a cosa servono le `ValueTask`, il viaggio del `CancellationToken` dal browser fino a SQL Server, perché il seeder non usa `Task.WhenAll` e cosa resta sincrono di proposito — sta nel [README](../README.md#async-e-await-in-questa-applicazione).**
+
 [➡ Prossima parte: PL — AutoMapper e il MappingProfile](07-plapi-automapper-mapping.md)
