@@ -279,7 +279,7 @@ FirstOrDefaultAsync -> Oppenheimer
 
 Sembra uno spreco chiedere due righe per restituirne una. Invece è l'unico modo di **mantenere la promessa**: `Single` garantisce che esista **una sola** riga, e per accorgersi che ce n'è una seconda deve provare a leggerla. Se `TOP(2)` ne riporta due, lancia l'eccezione. È la differenza con `First`, che si accontenta della prima e prende `TOP(1)`.
 
-### ⚠️ `FindAsync` è speciale: può non fare nessuna query
+### ⚠️ `_dbSet.FindAsync(id)` è speciale: può non fare nessuna query
 
 ```csharp
 // MovieManager.DAL/Repositories/GenericRepository.cs
@@ -287,9 +287,11 @@ public async Task<T?> GetByIdAsync(int id, CancellationToken cancellationToken =
     => await _dbSet.FindAsync(new object[] { id }, cancellationToken);
 ```
 
-`FindAsync` guarda **prima nel change tracker**: se l'entità con quell'Id è già stata caricata in questo `DbContext`, la restituisce **senza andare sul database**. Solo se non la trova fa la `SELECT`. Per questo restituisce `ValueTask` e non `Task` — il dettaglio è nel [capitolo 6](06-bll-services.md).
+> Qui si parla del **`FindAsync` di EF Core**, quello chiamato su `_dbSet`. Da non confondere con `GenericRepository.FindAsync(predicate)`, che è un metodo mio e si comporta in modo diverso ([capitolo 4](04-dal-repository-unitofwork.md)).
 
-È anche l'unico terminatore che **non** si può comporre: `_dbSet.Where(...).FindAsync(...)` non esiste. `FindAsync` lavora solo per chiave primaria, direttamente sul `DbSet`.
+`_dbSet.FindAsync(id)` guarda **prima nel change tracker**: se l'entità con quell'Id è già stata caricata in questo `DbContext`, la restituisce **senza andare sul database**. Solo se non la trova fa la `SELECT`. Per questo restituisce `ValueTask` e non `Task` — il dettaglio è nel [capitolo 6](06-bll-services.md).
+
+È anche l'unico terminatore che **non** si può comporre: `_dbSet.Where(...).FindAsync(...)` non esiste. Lavora solo per chiave primaria, direttamente sul `DbSet`.
 
 ### ⚠️ Una correzione: `AverageAsync` su una colonna `int` **non** tronca
 
@@ -449,9 +451,14 @@ INNER JOIN [Genres] AS [g] ON [m].[GenreId] = [g].[Id]
 ## 12.7 Tracking e `AsNoTracking`: cosa cambia nell'SQL (niente) e in RAM (molto)
 
 ```csharp
-_dbSet.AsNoTracking().ToListAsync()   // GetAllAsync, FindAsync
-_dbSet.FindAsync(id)                  // GetByIdAsync -> TRACCIA
+// GenericRepository.GetAllAsync  e  GenericRepository.FindAsync(predicate)
+_dbSet.AsNoTracking().ToListAsync()   // -> NON traccia
+
+// GenericRepository.GetByIdAsync
+_dbSet.FindAsync(id)                  // -> TRACCIA
 ```
+
+> ⚠️ Le due righe qui sopra contengono **due `FindAsync` diversi**, ed è un'omonimia che confonde: `GenericRepository.FindAsync(predicate)` è un metodo **mio** che cerca per condizione e **non** traccia; `_dbSet.FindAsync(id)` è di **EF Core**, cerca per chiave primaria e **traccia**. Il dettaglio è nel [capitolo 4](04-dal-repository-unitofwork.md).
 
 Fatto che sorprende: **l'SQL è identico**. `AsNoTracking()` non cambia una virgola della `SELECT`. Cambia cosa EF fa **dopo** aver ricevuto le righe:
 
@@ -465,8 +472,8 @@ Fatto che sorprende: **l'SQL è identico**. `AsNoTracking()` non cambia una virg
 
 Da qui la scelta del repository, che ora si legge da sola:
 
-- `GetAllAsync` / `FindAsync` → **sola lettura**, i dati escono verso il controller e nessuno li modificherà: `AsNoTracking()`.
-- `GetByIdAsync` → usa `FindAsync`, che **traccia**. È voluto: il `GenericService` lo chiama dentro `UpdateAsync` e `DeleteAsync` proprio per poi modificare o cancellare l'entità ([capitolo 6](06-bll-services.md)).
+- `GetAllAsync()` e `FindAsync(predicate)` → **sola lettura**: i dati escono verso il controller e nessuno li modificherà, quindi `AsNoTracking()`.
+- `GetByIdAsync(id)` → **traccia**, perché sotto usa `_dbSet.FindAsync(id)` di EF Core. È voluto: il `GenericService` lo chiama dentro `UpdateAsync` e `DeleteAsync` proprio per poi modificare o cancellare l'entità ([capitolo 6](06-bll-services.md)).
 
 > ⚠️ **Il bug che nasce da qui.** Se `GetByIdAsync` usasse `AsNoTracking()`, `UpdateAsync` smetterebbe di funzionare **in silenzio**: `_mapper.Map(model, existing)` modificherebbe un oggetto che EF non sta guardando, `SaveChangesAsync` non troverebbe niente da salvare e restituirebbe `0`. Nessuna eccezione, nessun errore, la `PUT` risponderebbe `204` e il dato non cambierebbe. È il tipo di bug peggiore: quello che non si lamenta.
 

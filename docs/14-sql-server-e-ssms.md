@@ -175,7 +175,7 @@ reserved  data     index_size  unused
 3856 KB   1224 KB  1536 KB     1096 KB
 ```
 
-Un dettaglio che dice più di quanto sembri: **gli indici (1536 KB) occupano più dei dati (1224 KB)**. Sono i tre indici sulle chiavi esterne che EF crea da solo ([cap. 13](13-migrations.md)) più le chiavi primarie. È normale, ed è il prezzo che si paga per avere le JOIN veloci: un indice è dati duplicati e riordinati.
+Un dettaglio che dice più di quanto sembri: **gli indici (1536 KB) occupano più dei dati (1224 KB)**. Sono i quattro indici sulle chiavi esterne che EF crea da solo ([cap. 13](13-migrations.md)) più le chiavi primarie. È normale, ed è il prezzo che si paga per avere le JOIN veloci: un indice è dati duplicati e riordinati.
 
 ---
 
@@ -204,7 +204,7 @@ SELECT Title FROM Movies WHERE Id = 3;
                         SEEK:([Movies].[Id]=CONVERT_IMPLICIT(int,[@1],0)) ORDERED FORWARD)
 ```
 
-Usa `PK_Movies` e va dritto alla riga. È la query che fa `FindAsync(3)` del repository ([cap. 12](12-dal-controller-all-sql.md)).
+Usa `PK_Movies` e va dritto alla riga. È la query che fa `GetByIdAsync(3)` del repository ([cap. 12](12-dal-controller-all-sql.md)).
 
 **2. Cerca per una colonna senza indice → `Scan`:**
 

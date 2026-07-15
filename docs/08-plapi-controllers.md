@@ -125,6 +125,8 @@ Gli altri controller a chiave singola — `GenresController`, `DirectorsControll
 Per la tabella ponte a chiave composta serve un controller diverso, che usa `IMovieActorService` e ha rotte con **due** parametri:
 
 ```csharp
+// Controller dedicato alla tabella ponte MovieActor: chiave composta (movieId, actorId),
+// quindi non usa IGenericService ma il servizio custom IMovieActorService.
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
@@ -132,43 +134,62 @@ public class MovieActorsController : ControllerBase
 {
     private readonly IMovieActorService _service;
 
-    public MovieActorsController(IMovieActorService service) => _service = service;
+    public MovieActorsController(IMovieActorService service)
+    {
+        _service = service;
+    }
 
-    // GET api/movieactors/movie/5  -> tutti gli attori di un film
+    // GET api/movieactors/movie/5  -> tutte le associazioni (attori) di un film
     [HttpGet("movie/{movieId:int}")]
-    public async Task<ActionResult<IReadOnlyList<MovieActorModel>>> GetByMovie(int movieId, CancellationToken ct)
-        => Ok(await _service.GetByMovieIdAsync(movieId, ct));
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<MovieActorModel>>> GetByMovie(int movieId, CancellationToken cancellationToken)
+        => Ok(await _service.GetByMovieIdAsync(movieId, cancellationToken));
 
     // GET api/movieactors/5/8  -> singola associazione film-attore
     [HttpGet("{movieId:int}/{actorId:int}")]
-    public async Task<ActionResult<MovieActorModel>> GetByIds(int movieId, int actorId, CancellationToken ct)
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<MovieActorModel>> GetByIds(int movieId, int actorId, CancellationToken cancellationToken)
     {
-        var model = await _service.GetByIdsAsync(movieId, actorId, ct);
+        var model = await _service.GetByIdsAsync(movieId, actorId, cancellationToken);
         return model is null ? NotFound() : Ok(model);
     }
 
     [HttpPost]
-    public async Task<ActionResult<MovieActorModel>> Create(MovieActorModel model, CancellationToken ct)
+    [ProducesResponseType(StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<MovieActorModel>> Create(MovieActorModel model, CancellationToken cancellationToken)
     {
-        var created = await _service.CreateAsync(model, ct);
-        return CreatedAtAction(nameof(GetByIds),
-            new { movieId = created.MovieId, actorId = created.ActorId }, created);
+        var created = await _service.CreateAsync(model, cancellationToken);
+        return CreatedAtAction(nameof(GetByIds), new { movieId = created.MovieId, actorId = created.ActorId }, created);
     }
 
     [HttpPut("{movieId:int}/{actorId:int}")]
-    public async Task<IActionResult> Update(int movieId, int actorId, MovieActorModel model, CancellationToken ct)
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Update(int movieId, int actorId, MovieActorModel model, CancellationToken cancellationToken)
     {
         if (movieId != model.MovieId || actorId != model.ActorId)
             return BadRequest();
-        return await _service.UpdateAsync(model, ct) ? NoContent() : NotFound();
+
+        var updated = await _service.UpdateAsync(model, cancellationToken);
+        return updated ? NoContent() : NotFound();
     }
 
     [HttpDelete("{movieId:int}/{actorId:int}")]
-    public async Task<IActionResult> Delete(int movieId, int actorId, CancellationToken ct)
-        => await _service.DeleteAsync(movieId, actorId, ct) ? NoContent() : NotFound();
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Delete(int movieId, int actorId, CancellationToken cancellationToken)
+    {
+        var deleted = await _service.DeleteAsync(movieId, actorId, cancellationToken);
+        return deleted ? NoContent() : NotFound();
+    }
 }
 ```
 
 Le rotte riflettono la chiave composta: `api/movieactors/{movieId}/{actorId}` per la singola associazione, e `api/movieactors/movie/{movieId}` per elencare tutti gli attori di un film. Il controllo di coerenza nel PUT qui verifica **entrambe** le chiavi.
+
+I `ProducesResponseType` ci sono come negli altri controller, e servono allo stesso scopo: far finire i codici di risposta nel documento OpenAPI, e da lì in Scalar ([capitolo 11](11-scalar-e-prova-api.md)). L'unica differenza è che qui ce ne sono **due** di rotte per la stessa risorsa, perché la chiave è doppia.
 
 [➡ Prossima parte: PL — Program.cs, DI e Scalar](09-plapi-program-di-scalar.md)

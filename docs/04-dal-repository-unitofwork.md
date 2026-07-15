@@ -95,9 +95,34 @@ namespace MovieManager.DAL.Repositories
 
 ### (?) Che cosa è `AsNoTracking()`?
 
-Di default il `DbContext` **tiene traccia** di ogni oggetto che leggi (change tracking), per accorgersi se lo modifichi. Ma in **sola lettura** questo è lavoro sprecato: `AsNoTracking()` dice a EF "questi oggetti li leggo e basta, non li seguire". Risultato: query più veloci e meno memoria. Per questo lo uso in `GetAllAsync` e `FindAsync`.
+Di default il `DbContext` **tiene traccia** di ogni oggetto che legge (il *change tracking*): ne conserva una copia, per poter capire più tardi se l'ho modificato. È il meccanismo che fa funzionare `SaveChanges()` senza che io debba dirgli cosa è cambiato.
 
-Invece `GetByIdAsync` usa `FindAsync`, che **traccia** l'entità: è voluto, perché spesso quell'oggetto lo carico proprio per poi modificarlo o cancellarlo, e in quel caso il tracking mi serve.
+In **sola lettura** però è lavoro sprecato: tenere una copia di oggetti che nessuno modificherà costa memoria e basta. `AsNoTracking()` dice a EF "questi li leggo e via, non seguirli".
+
+La regola che seguo nel repository è: **traccio solo quello che ho intenzione di modificare.**
+
+| Metodo del repository | Traccia? | Perché |
+|---|---|---|
+| `GetAllAsync()` | **no** — `AsNoTracking()` | i dati escono verso il controller, nessuno li modificherà |
+| `FindAsync(predicate)` | **no** — `AsNoTracking()` | idem: è una ricerca in sola lettura |
+| `GetByIdAsync(id)` | **sì** | lo chiamano `UpdateAsync` e `DeleteAsync` proprio per modificare l'entità ([capitolo 6](06-bll-services.md)) |
+
+> ⚠️ **Occhio all'omonimia: in questo file ci sono due `FindAsync` diversi, con comportamento opposto.**
+>
+> ```csharp
+> public async Task<T?> GetByIdAsync(int id, ...)
+>     => await _dbSet.FindAsync(new object[] { id }, ...);              // FindAsync di EF Core -> TRACCIA
+>
+> public async Task<IReadOnlyList<T>> FindAsync(Expression<Func<T, bool>> predicate, ...)
+>     => await _dbSet.AsNoTracking().Where(predicate).ToListAsync(...); // FindAsync mio -> NON traccia
+> ```
+>
+> - **`FindAsync(predicate)`** è **mio**, dichiarato in `IGenericRepository`: cerca per **condizione** e non traccia.
+> - **`_dbSet.FindAsync(id)`** è di **EF Core**: cerca per **chiave primaria** e traccia.
+>
+> Non è un errore di battitura né una svista: sono due metodi di due librerie diverse che si chiamano uguale. Quando leggo "FindAsync" — qui o negli altri capitoli — conta sempre **su cosa** è chiamato: sul repository è il mio, su `_dbSet` è quello di EF.
+
+> 📖 Cosa cambia esattamente fra tracciare e non tracciare (nell'SQL: **niente**; in memoria: molto), e il bug silenzioso che nasce sbagliando questa scelta, sono nella [sezione 12.7](12-dal-controller-all-sql.md).
 
 ---
 

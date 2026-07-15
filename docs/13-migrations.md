@@ -232,15 +232,44 @@ table.CheckConstraint("CK_Review_Score", "[Score] >= 1 AND [Score] <= 10");
 
 `ReferentialAction.Cascade` non l'ho mai scritto io: è la **convenzione** di EF per le relazioni obbligatorie ([capitolo 3](03-dal-dbcontext.md)). Vederlo in un file che posso aprire e modificare è tutta un'altra cosa rispetto a scoprirlo cancellando un genere e ritrovandosi senza film. **Con le migration le convenzioni dell'ORM diventano codice leggibile e discutibile in una code review.**
 
-EF ha anche creato tre indici che non avevo chiesto:
+EF ha anche creato **quattro indici** che non avevo chiesto:
 
 ```csharp
-migrationBuilder.CreateIndex(name: "IX_Movies_GenreId",       table: "Movies",      column: "GenreId");
-migrationBuilder.CreateIndex(name: "IX_Movies_DirectorId",    table: "Movies",      column: "DirectorId");
 migrationBuilder.CreateIndex(name: "IX_MovieActors_ActorId",  table: "MovieActors", column: "ActorId");
+migrationBuilder.CreateIndex(name: "IX_Movies_DirectorId",    table: "Movies",      column: "DirectorId");
+migrationBuilder.CreateIndex(name: "IX_Movies_GenreId",       table: "Movies",      column: "GenreId");
+migrationBuilder.CreateIndex(name: "IX_Reviews_MovieId",      table: "Reviews",     column: "MovieId");
 ```
 
-Un indice su ogni chiave esterna: è ciò che rende veloci le JOIN della sezione 10.6.
+Un indice su ogni chiave esterna: è ciò che rende veloci le JOIN della sezione 10.6, e si vede nel piano di esecuzione come `Seek` invece che `Scan` ([capitolo 14](14-sql-server-e-ssms.md)).
+
+### Perché quattro indici e non cinque?
+
+Le chiavi esterne però sono **cinque**. Chiedendo al database quale indice copre ciascuna, salta fuori la sola che non ne ha uno dedicato:
+
+| Foreign key | Indice che la copre |
+|---|---|
+| `Movies.GenreId` | `IX_Movies_GenreId` |
+| `Movies.DirectorId` | `IX_Movies_DirectorId` |
+| `MovieActors.ActorId` | `IX_MovieActors_ActorId` |
+| `Reviews.MovieId` | `IX_Reviews_MovieId` |
+| **`MovieActors.MovieId`** | **`PK_MovieActors`** ← nessun indice dedicato |
+
+Non è una dimenticanza di EF, è intelligenza. La chiave primaria di `MovieActors` è `(MovieId, ActorId)`, e **`MovieId` è la prima colonna**:
+
+```sql
+SELECT i.name, ic.key_ordinal, COL_NAME(ic.object_id, ic.column_id)
+FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+WHERE i.object_id = OBJECT_ID('MovieActors') AND i.is_primary_key = 1;
+```
+```
+PK_MovieActors  1  MovieId
+PK_MovieActors  2  ActorId
+```
+
+Un indice su più colonne serve anche per cercare **solo sulla prima**, come un elenco telefonico ordinato per cognome e nome serve anche a cercare per solo cognome. Quindi `PK_MovieActors` copre già le ricerche per `MovieId`, e un `IX_MovieActors_MovieId` sarebbe copia sprecata. `ActorId`, che è in seconda posizione, quell'aiuto non ce l'ha — e infatti il suo indice EF lo crea.
+
+> **E qui si scopre che l'ordine nella chiave composta contava.** Nel [capitolo 3](03-dal-dbcontext.md) ho scritto `HasKey(ma => new { ma.MovieId, ma.ActorId })` senza pensarci troppo. Quell'ordine ha deciso quale delle due colonne prende l'indice gratis e quale se ne fa creare uno apposta. Scrivendo `new { ma.ActorId, ma.MovieId }` lo schema sarebbe uscito diverso. È il genere di conseguenza che `EnsureCreated()` non fa mai vedere e che una migration mette nero su bianco.
 
 ---
 
