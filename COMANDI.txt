@@ -1,0 +1,511 @@
+================================================================================
+ MOVIEMANAGER - GUIDA AI COMANDI CRUD (Scalar / PowerShell / SQL)
+================================================================================
+
+ API .......... http://localhost:5140
+ Scalar ....... http://localhost:5140/scalar
+ OpenAPI ...... http://localhost:5140/openapi/v1.json
+ Database ..... (localdb)\MSSQLLocalDB  ->  MovieManagerDb
+
+ INDICE
+   1. Avviare e fermare l'applicazione
+   2. Usare Scalar (interfaccia web)
+   3. PowerShell - preparazione
+   4. PowerShell - Actors (schema CRUD completo, vale per tutti)
+   5. PowerShell - Genres
+   6. PowerShell - Directors
+   7. PowerShell - Movies
+   8. PowerShell - Reviews
+   9. PowerShell - MovieActors (cast, chiave composta)
+  10. SQL diretto con sqlcmd
+  11. Reset del database
+  12. Cose da sapere (errori tipici e trappole)
+
+
+================================================================================
+ 1. AVVIARE E FERMARE L'APPLICAZIONE
+================================================================================
+
+ Avvio:
+
+   cd "C:\Workspace\EsercizioC#Avanzato\MovieManager"
+   dotnet run --project MovieManager.PL.API
+
+ Fermare l'app: Ctrl+C nella finestra dove gira.
+
+ Cosa succede a ogni avvio (Program.cs):
+   - EnsureCreated()  -> crea database e schema se non esistono ancora
+   - MovieDbSeeder    -> inserisce i dati di esempio che mancano
+
+ Il seeder e' idempotente: confronta la chiave naturale (nome, titolo) e non
+ l'Id, quindi puoi riavviare quante volte vuoi senza duplicare niente e senza
+ perdere le righe che hai aggiunto tu.
+
+ Solo compilare, senza avviare:
+
+   dotnet build MovieManager.slnx
+
+
+================================================================================
+ 2. USARE SCALAR (INTERFACCIA WEB)
+================================================================================
+
+ Con l'app avviata, apri:  http://localhost:5140/scalar
+
+ Come si usa:
+   1. Nella colonna di sinistra scegli il gruppo (Actors, Genres, Movies, ...)
+      e l'operazione (GET / POST / PUT / DELETE).
+   2. Premi "Test Request".
+   3. Compila i parametri di percorso (es. id) e/o il body JSON.
+   4. Premi "Send" e leggi la risposta in basso.
+
+ Risposte che devi aspettarti:
+   200 OK        -> GET andato a buon fine, il body contiene i dati
+   201 Created   -> POST andato a buon fine, il body contiene la riga creata
+   204 No Content-> PUT o DELETE andati a buon fine (nessun body: e' normale)
+   400 Bad Request -> nella PUT l'id nell'URL e quello nel body sono diversi
+   404 Not Found -> l'id richiesto non esiste
+
+ NOTA sulla POST: Scalar precompila il body di esempio includendo "id".
+ Quel campo ora viene ignorato: l'Id lo assegna sempre il database.
+ Puoi lasciarlo a 0, cancellarlo, o metterci qualsiasi numero: non cambia nulla.
+
+
+================================================================================
+ 3. POWERSHELL - PREPARAZIONE
+================================================================================
+
+ Apri una SECONDA finestra PowerShell (la prima resta occupata da "dotnet run")
+ e imposta la variabile di base, una volta per sessione:
+
+   $base = "http://localhost:5140/api"
+
+ Suggerimenti di lettura dell'output:
+
+   # tabella compatta
+   Invoke-RestMethod "$base/Actors" | Format-Table
+
+   # JSON completo
+   Invoke-RestMethod "$base/Actors" | ConvertTo-Json -Depth 5
+
+   # solo alcune colonne
+   Invoke-RestMethod "$base/Actors" | Format-Table id, firstName, lastName
+
+ Vedere il messaggio d'errore vero quando qualcosa fallisce:
+
+   try {
+       Invoke-RestMethod "$base/Actors/999"
+   } catch {
+       "Status : $($_.Exception.Response.StatusCode.value__)"
+       "Dettaglio: $($_.ErrorDetails.Message)"
+   }
+
+
+================================================================================
+ 4. POWERSHELL - ACTORS
+================================================================================
+
+ Campi: id, firstName*, lastName*, birthDate, country, biography
+ (* obbligatori, massimo 100 caratteri. Le date vanno in formato "aaaa-mm-gg".)
+
+ ---- READ: tutti gli attori ----
+
+   Invoke-RestMethod "$base/Actors" | Format-Table id, firstName, lastName, country
+
+ ---- READ: un attore per Id ----
+
+   Invoke-RestMethod "$base/Actors/1"
+
+ ---- CREATE: nuovo attore ----
+
+   $nuovo = @{
+       firstName = "Anya"
+       lastName  = "Taylor-Joy"
+       birthDate = "1996-04-16"
+       country   = "Stati Uniti"
+       biography = "Attrice anglo-americana."
+   } | ConvertTo-Json
+
+   $creato = Invoke-RestMethod "$base/Actors" -Method Post -Body $nuovo -ContentType "application/json"
+   "Creato con Id $($creato.id)"
+
+ ---- UPDATE: modifica un attore ----
+
+ Attenzione: la PUT SOSTITUISCE tutta la riga. Devi mandare TUTTI i campi:
+ quelli che ometti vengono azzerati. L'id nell'URL e l'id nel body devono
+ coincidere, altrimenti ricevi 400.
+
+   $modifica = @{
+       id        = 2
+       firstName = "Zendaya"
+       lastName  = "Coleman"
+       birthDate = "1996-09-01"
+       country   = "Stati Uniti"
+       biography = "Biografia aggiornata."
+   } | ConvertTo-Json
+
+   Invoke-RestMethod "$base/Actors/2" -Method Put -Body $modifica -ContentType "application/json"
+
+ (non stampa niente = 204 = riuscito)
+
+ Variante comoda: leggi, cambia un campo solo, rimanda indietro tutto.
+
+   $a = Invoke-RestMethod "$base/Actors/2"
+   $a.biography = "Nuova biografia."
+   Invoke-RestMethod "$base/Actors/2" -Method Put -Body ($a | ConvertTo-Json) -ContentType "application/json"
+
+ ---- DELETE: cancella un attore ----
+
+   # per Id esplicito
+   Invoke-RestMethod "$base/Actors/11" -Method Delete
+
+   # oppure, riusando la variabile della CREATE qui sopra
+   Invoke-RestMethod "$base/Actors/$($creato.id)" -Method Delete
+
+ ATTENZIONE: cancellare un attore cancella a cascata le sue righe in
+ MovieActors (i ruoli nei film). Vedi la sezione 12.
+
+
+================================================================================
+ 5. POWERSHELL - GENRES
+================================================================================
+
+ Campi: id, name*, description
+ (* obbligatorio, massimo 100 caratteri)
+
+ Id attuali: 1 Fantascienza | 2 Dramma | 3 Thriller | 4 Commedia | 5 Animazione
+
+   # READ tutti
+   Invoke-RestMethod "$base/Genres" | Format-Table
+
+   # READ uno
+   Invoke-RestMethod "$base/Genres/1"
+
+   # CREATE
+   $g = @{ name = "Documentario"; description = "Racconto della realta'." } | ConvertTo-Json
+   Invoke-RestMethod "$base/Genres" -Method Post -Body $g -ContentType "application/json"
+
+   # UPDATE
+   $g = @{ id = 3; name = "Thriller"; description = "Descrizione aggiornata." } | ConvertTo-Json
+   Invoke-RestMethod "$base/Genres/3" -Method Put -Body $g -ContentType "application/json"
+
+   # DELETE  <-- PERICOLOSO: porta via anche i film del genere. Vedi sezione 12.
+   Invoke-RestMethod "$base/Genres/6" -Method Delete
+
+
+================================================================================
+ 6. POWERSHELL - DIRECTORS
+================================================================================
+
+ Campi: id, firstName*, lastName*, birthDate, country, biography
+ (* obbligatori, massimo 100 caratteri)
+
+ Id attuali: 1 Villeneuve | 2 Nolan | 3 Gerwig | 4 Bong Joon-ho | 5 Miyazaki
+
+   # READ tutti
+   Invoke-RestMethod "$base/Directors" | Format-Table id, firstName, lastName, country
+
+   # READ uno
+   Invoke-RestMethod "$base/Directors/1"
+
+   # CREATE
+   $d = @{
+       firstName = "Sofia"
+       lastName  = "Coppola"
+       birthDate = "1971-05-14"
+       country   = "Stati Uniti"
+       biography = "Regista statunitense."
+   } | ConvertTo-Json
+   Invoke-RestMethod "$base/Directors" -Method Post -Body $d -ContentType "application/json"
+
+   # UPDATE
+   $d = @{
+       id = 2; firstName = "Christopher"; lastName = "Nolan"
+       birthDate = "1970-07-30"; country = "Regno Unito"
+       biography = "Biografia aggiornata."
+   } | ConvertTo-Json
+   Invoke-RestMethod "$base/Directors/2" -Method Put -Body $d -ContentType "application/json"
+
+   # DELETE  <-- porta via a cascata i film del regista
+   Invoke-RestMethod "$base/Directors/6" -Method Delete
+
+
+================================================================================
+ 7. POWERSHELL - MOVIES
+================================================================================
+
+ Campi: id, title*, originalTitle, releaseDate*, durationMinutes, synopsis,
+        language*, country, budget, revenue, posterUrl, ageRating,
+        genreId*, directorId*
+ (* title max 200 caratteri; genreId e directorId devono esistere davvero)
+
+ Id attuali: 1 Dune | 2 Blade Runner 2049 | 3 Oppenheimer | 4 Barbie
+             5 Parasite | 6 La citta incantata
+
+   # READ tutti
+   Invoke-RestMethod "$base/Movies" | Format-Table id, title, releaseDate, genreId, directorId
+
+   # READ uno
+   Invoke-RestMethod "$base/Movies/1"
+
+   # CREATE
+   $m = @{
+       title           = "Arrival"
+       originalTitle   = "Arrival"
+       releaseDate     = "2016-11-11"
+       durationMinutes = 116
+       synopsis        = "Una linguista tenta di comunicare con visitatori alieni."
+       language        = "Inglese"
+       country         = "Stati Uniti"
+       budget          = 47000000
+       revenue         = 203000000
+       ageRating       = "T"
+       genreId         = 1     # Fantascienza
+       directorId      = 1     # Villeneuve
+   } | ConvertTo-Json
+
+   Invoke-RestMethod "$base/Movies" -Method Post -Body $m -ContentType "application/json"
+
+   # UPDATE (ricorda: tutti i campi)
+   $m = Invoke-RestMethod "$base/Movies/4"
+   $m.synopsis = "Sinossi aggiornata."
+   Invoke-RestMethod "$base/Movies/4" -Method Put -Body ($m | ConvertTo-Json) -ContentType "application/json"
+
+   # DELETE  <-- porta via a cascata recensioni e cast del film
+   Invoke-RestMethod "$base/Movies/7" -Method Delete
+
+
+================================================================================
+ 8. POWERSHELL - REVIEWS
+================================================================================
+
+ Campi: id, movieId*, reviewerName*, score*, comment, createdAt
+ (* movieId deve esistere; reviewerName max 100 caratteri;
+    score DEVE essere tra 1 e 10 -> vincolo CK_Review_Score sul database)
+
+   # READ tutte
+   Invoke-RestMethod "$base/Reviews" | Format-Table id, movieId, reviewerName, score
+
+   # READ una
+   Invoke-RestMethod "$base/Reviews/1"
+
+   # READ: solo le recensioni di un film (filtro lato PowerShell)
+   Invoke-RestMethod "$base/Reviews" | Where-Object movieId -eq 1 | Format-Table
+
+   # CREATE
+   $r = @{
+       movieId      = 1
+       reviewerName = "Antonio"
+       score        = 9
+       comment      = "Da rivedere al cinema."
+   } | ConvertTo-Json
+   Invoke-RestMethod "$base/Reviews" -Method Post -Body $r -ContentType "application/json"
+
+   # UPDATE
+   $r = Invoke-RestMethod "$base/Reviews/1"
+   $r.score = 10
+   Invoke-RestMethod "$base/Reviews/1" -Method Put -Body ($r | ConvertTo-Json) -ContentType "application/json"
+
+   # DELETE
+   Invoke-RestMethod "$base/Reviews/9" -Method Delete
+
+
+================================================================================
+ 9. POWERSHELL - MOVIEACTORS (CAST)
+================================================================================
+
+ Tabella ponte della relazione molti-a-molti Movie <-> Actor.
+ Ha CHIAVE COMPOSTA (movieId, actorId): non ha un Id singolo e le rotte sono
+ diverse dalle altre. NON esiste una "GET tutti".
+
+ Campi: movieId*, actorId*, characterName, isLeadRole, displayOrder
+
+   # READ: tutto il cast di un film
+   Invoke-RestMethod "$base/MovieActors/movie/1" | Format-Table
+
+   # READ: una singola associazione film/attore  ->  /movieId/actorId
+   Invoke-RestMethod "$base/MovieActors/1/2"
+
+   # CREATE: collega un attore a un film.
+   # La coppia (movieId, actorId) e' la chiave: se esiste gia' la POST fallisce.
+   # Esempio completo e realistico: prima crei l'attore, poi lo colleghi al film.
+
+   $a = @{ firstName = "Ana"; lastName = "de Armas"; country = "Cuba" } | ConvertTo-Json
+   $attore = Invoke-RestMethod "$base/Actors" -Method Post -Body $a -ContentType "application/json"
+
+   $ma = @{
+       movieId       = 2               # Blade Runner 2049
+       actorId       = $attore.id      # l'Id appena assegnato dal database
+       characterName = "Joi"
+       isLeadRole    = $false
+       displayOrder  = 3
+   } | ConvertTo-Json
+   Invoke-RestMethod "$base/MovieActors" -Method Post -Body $ma -ContentType "application/json"
+
+   # UPDATE: movieId e actorId nell'URL devono coincidere con quelli nel body
+   $ma = @{
+       movieId       = 1
+       actorId       = 2
+       characterName = "Chani"
+       isLeadRole    = $true
+       displayOrder  = 2
+   } | ConvertTo-Json
+   Invoke-RestMethod "$base/MovieActors/1/2" -Method Put -Body $ma -ContentType "application/json"
+
+   # DELETE: stacca un attore da un film (non cancella l'attore)
+   Invoke-RestMethod "$base/MovieActors/1/2" -Method Delete
+
+ Nota: qui la POST NON ignora le chiavi, anzi le pretende: movieId e actorId
+ li decidi tu e devono riferirsi a un film e a un attore che esistono gia'.
+
+ Nota: se stacchi una coppia che fa parte dei dati di esempio (come 1/2, cioe'
+ Zendaya in Dune), al prossimo avvio il seeder la ricrea, perche' si accorge
+ che manca. Le coppie aggiunte da te invece restano come le hai lasciate.
+
+
+================================================================================
+ 10. SQL DIRETTO CON SQLCMD
+================================================================================
+
+ Utile per guardare nel database senza passare dall'API. Funziona anche con
+ l'applicazione spenta.
+
+ ---- Comando singolo ----
+
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -Q "SELECT * FROM Actors;" -W
+
+   (-W toglie gli spazi di riempimento e rende l'output leggibile)
+
+ ---- Sessione interattiva ----
+
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb
+
+   Poi scrivi la query, vai a capo, scrivi GO e premi Invio.
+   Per uscire: QUIT
+
+ ---- Query utili ----
+
+   # quante righe per tabella
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -W -Q "SET NOCOUNT ON; SELECT 'Genres' AS Tabella, COUNT(*) AS Righe FROM Genres UNION ALL SELECT 'Directors', COUNT(*) FROM Directors UNION ALL SELECT 'Actors', COUNT(*) FROM Actors UNION ALL SELECT 'Movies', COUNT(*) FROM Movies UNION ALL SELECT 'MovieActors', COUNT(*) FROM MovieActors UNION ALL SELECT 'Reviews', COUNT(*) FROM Reviews;"
+
+   # film con genere, regista, numero di attori e di recensioni
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -W -Q "SET NOCOUNT ON; SELECT m.Id, m.Title, g.Name AS Genere, d.LastName AS Regista, (SELECT COUNT(*) FROM MovieActors ma WHERE ma.MovieId = m.Id) AS Cast, (SELECT COUNT(*) FROM Reviews r WHERE r.MovieId = m.Id) AS Recensioni FROM Movies m JOIN Genres g ON g.Id = m.GenreId JOIN Directors d ON d.Id = m.DirectorId ORDER BY m.Id;"
+
+   # cast di un film
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -W -Q "SET NOCOUNT ON; SELECT a.FirstName + ' ' + a.LastName AS Attore, ma.CharacterName AS Personaggio, ma.IsLeadRole AS Protagonista FROM MovieActors ma JOIN Actors a ON a.Id = ma.ActorId WHERE ma.MovieId = 1 ORDER BY ma.DisplayOrder;"
+
+   # in quali film recita un attore
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -W -Q "SET NOCOUNT ON; SELECT m.Title, ma.CharacterName FROM MovieActors ma JOIN Movies m ON m.Id = ma.MovieId WHERE ma.ActorId = 8;"
+
+   # elenco delle foreign key e cosa fanno in cancellazione
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -W -Q "SET NOCOUNT ON; SELECT OBJECT_NAME(fk.parent_object_id) AS TabellaFiglia, OBJECT_NAME(fk.referenced_object_id) AS TabellaPadre, fk.delete_referential_action_desc AS OnDelete FROM sys.foreign_keys fk;"
+
+ ---- Provare una modifica senza rischiare ----
+
+ Racchiudi tutto tra BEGIN TRANSACTION e ROLLBACK: vedi l'effetto ma il
+ database resta com'era.
+
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -W -Q "SET NOCOUNT ON; BEGIN TRANSACTION; DELETE FROM Genres WHERE Id = 1; SELECT COUNT(*) AS FilmRimasti FROM Movies; ROLLBACK; SELECT COUNT(*) AS FilmDopoRollback FROM Movies;"
+
+ ---- INSERT a mano (attenzione all'identity) ----
+
+ NON scrivere la colonna Id: la genera SQL Server.
+
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -Q "INSERT INTO Actors (FirstName, LastName, Country) VALUES ('Mia', 'Goth', 'Regno Unito');"
+
+ Se proprio devi imporre un Id (di norma non serve):
+
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -Q "SET IDENTITY_INSERT Actors ON; INSERT INTO Actors (Id, FirstName, LastName) VALUES (500, 'Test', 'Test'); SET IDENTITY_INSERT Actors OFF;"
+
+
+================================================================================
+ 11. RESET DEL DATABASE
+================================================================================
+
+ Per tornare da zero con i soli dati del seeder:
+
+   1. Ferma l'applicazione (Ctrl+C nella finestra di "dotnet run").
+
+   2. Elimina il database (chiude anche le connessioni ancora aperte):
+
+      sqlcmd -S "(localdb)\MSSQLLocalDB" -Q "ALTER DATABASE MovieManagerDb SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE MovieManagerDb;"
+
+   3. Riavvia: schema e dati di esempio vengono ricreati da soli.
+
+      dotnet run --project MovieManager.PL.API
+
+ Svuotare le tabelle senza eliminare il database (l'ordine conta per via
+ delle foreign key), poi riavviare l'app per rifare il seed:
+
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -Q "DELETE FROM MovieActors; DELETE FROM Reviews; DELETE FROM Movies; DELETE FROM Actors; DELETE FROM Directors; DELETE FROM Genres;"
+
+ Comandi utili su LocalDB:
+
+   sqllocaldb info                  # elenca le istanze
+   sqllocaldb info MSSQLLocalDB     # stato dell'istanza
+   sqllocaldb start MSSQLLocalDB    # avvia l'istanza
+   sqllocaldb stop MSSQLLocalDB     # ferma l'istanza
+
+
+================================================================================
+ 12. COSE DA SAPERE (ERRORI TIPICI E TRAPPOLE)
+================================================================================
+
+ --- L'Id nella POST viene ignorato ---
+ L'Id e' una colonna identity: lo assegna il database. Se nel body ne mandi
+ uno, viene scartato (GenericService.CreateAsync lo azzera). Era proprio
+ questo il motivo dell'errore
+   "Cannot insert explicit value for identity column ... IDENTITY_INSERT is OFF"
+ (errore SQL 544) che compariva mandando un id diverso da zero.
+ Eccezione: MovieActors, dove movieId e actorId li devi indicare tu.
+
+ --- La PUT e' una sostituzione totale ---
+ I campi che ometti nel body diventano null / 0 / stringa vuota, non restano
+ al valore precedente. Il modo sicuro: fai la GET, cambia il campo, rimanda
+ indietro l'oggetto intero. Inoltre l'id nell'URL deve essere uguale a quello
+ nel body, altrimenti e' 400.
+
+ --- Le DELETE cancellano a cascata (la trappola piu' grossa) ---
+ Tutte le foreign key sono in ON DELETE CASCADE:
+
+     Genres    -> Movies -> MovieActors + Reviews
+     Directors -> Movies -> MovieActors + Reviews
+     Actors    -> MovieActors
+     Movies    -> MovieActors + Reviews
+
+ Quindi cancellare UN genere puo' portarsi via molto piu' di quello che pensi.
+ Misurato su questi dati: eliminando il solo genere "Fantascienza" spariscono
+ 2 film, 3 recensioni e 5 righe di cast.
+ Prima di cancellare, controlla cosa ci sta attaccato:
+
+   Invoke-RestMethod "$base/Movies" | Where-Object genreId -eq 1 | Format-Table id, title
+
+ --- Il punteggio delle recensioni deve stare tra 1 e 10 ---
+ C'e' un vincolo CHECK sul database (CK_Review_Score). Un valore fuori range
+ non da' un 400 gentile: fa fallire il salvataggio con un errore 500.
+
+ --- genreId / directorId inesistenti ---
+ Una POST su Movies con un genreId o un directorId che non esiste viola la
+ foreign key e risponde 500, non 400. Controlla prima gli Id disponibili con
+ GET /api/Genres e GET /api/Directors.
+
+ --- Non c'e' validazione sui campi obbligatori ---
+ firstName e lastName sono "required" solo come NOT NULL sul database, ma la
+ stringa vuota lo soddisfa: una POST con body vuoto {} crea davvero un attore
+ senza nome. Se ne trovi uno, cancellalo cosi':
+
+   Invoke-RestMethod "$base/Actors/12" -Method Delete
+
+ --- Il formato delle date ---
+ birthDate e releaseDate sono DateOnly: vanno scritte come "aaaa-mm-gg"
+ (esempio "1995-12-27"), senza orario.
+ createdAt delle recensioni e' invece un DateTime completo.
+
+ --- La porta 5140 risulta occupata ---
+ Hai gia' un'istanza avviata. Trovala e chiudila:
+
+   Get-NetTCPConnection -LocalPort 5140 -State Listen | Select-Object OwningProcess
+   Stop-Process -Id <numero_del_processo>
+
+ --- L'avviso "Failed to determine the https port for redirect" ---
+ E' innocuo: non e' configurata una porta HTTPS e si usa http://localhost:5140.
