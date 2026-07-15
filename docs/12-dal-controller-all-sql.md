@@ -127,16 +127,51 @@ Il vantaggio pratico è il punto 2: **la query si compone a pezzi** — filtri o
 
 Ecco la famiglia. Sono i metodi che dicono a EF "adesso basta descrivere, vai a prendere i dati".
 
+Non me li sono inventati: questo è l'elenco **completo** dei `To*` che EF Core offre su un `IQueryable`, letto per riflessione dall'assembly (`EntityFrameworkQueryableExtensions`):
+
+```
+ToArrayAsync, ToDictionaryAsync, ToHashSetAsync, ToListAsync, ToQueryString, ToString
+```
+
 | Metodo | Restituisce | Quando lo uso |
 |--------|-------------|---------------|
 | **`ToListAsync()`** | `List<T>` | il caso normale, il 90% delle volte |
 | **`ToArrayAsync()`** | `T[]` | quando serve un array fisso; leggermente più economico se non aggiungerò elementi |
 | **`ToDictionaryAsync(k => ...)`** | `Dictionary<K,V>` | quando dopo devo **cercare per chiave** tante volte |
-| **`ToHashSet()`** | `HashSet<T>` | test di appartenenza rapidi. **Attenzione: gira in memoria** (vedi sotto) |
+| **`ToHashSetAsync()`** | `HashSet<T>` | test di appartenenza rapidi (`Contains`), senza duplicati |
 | **`ToQueryString()`** | `string` | **non esegue niente**: mi mostra l'SQL che partirebbe |
 | **`ToListAsync()` su `ProjectTo<T>()`** | `List<TModel>` | proiezione diretta model → SQL (sezione 12.6) |
 
-Tutti hanno la versione sincrona (`ToList`, `ToArray`, `ToDictionary`), che in un'applicazione web **non va usata**: bloccherebbe il thread esattamente come spiegato nel [capitolo 6](06-bll-services.md).
+I primi quattro hanno anche la versione sincrona (`ToList`, `ToArray`, `ToDictionary`, `ToHashSet`), che in un'applicazione web **non va usata**: bloccherebbe il thread esattamente come spiegato nel [capitolo 6](06-bll-services.md).
+
+> ⚠️ **La distinzione da non sbagliare: `ToHashSet()` e `ToHashSetAsync()` non sono lo stesso metodo con due facce.** Sono due metodi di **due librerie diverse**:
+>
+> | | Di chi è | Lavora su | Cosa fa |
+> |---|---|---|---|
+> | `ToHashSetAsync()` | **EF Core** | `IQueryable` | manda la `SELECT` e costruisce l'`HashSet` |
+> | `ToHashSet()` | **LINQ** | `IEnumerable` | costruisce l'`HashSet` da dati **già in memoria** |
+>
+> È la stessa frattura fra i due mondi vista qui sopra, e vale per tutta la famiglia: la versione `Async` è di EF e va sul database, quella senza è di LINQ e no. Quando si chiamano su un `IQueryable` finiscono per fare entrambe la stessa cosa (LINQ enumera, ed enumerare un `IQueryable` fa partire la query) — ma solo quella di EF lo fa **senza bloccare il thread**.
+
+**`ToLookup()` è l'eccezione vera: async non ce l'ha proprio.** È solo LINQ, e in EF Core non esiste nessun `ToLookupAsync`. È il `Dictionary` che ammette **più valori per chiave** — e su un `IQueryable` si comporta così:
+
+```csharp
+var lookup = db.Movies.AsNoTracking().ToLookup(m => m.GenreId);
+```
+```sql
+SELECT [m].[Id], [m].[AgeRating], ... , [m].[Title]
+FROM [Movies] AS [m]
+```
+```
+>>> 5 chiavi
+    GenreId 1: Dune, Blade Runner 2049
+    GenreId 2: Oppenheimer
+    GenreId 4: Barbie
+    GenreId 3: Parasite
+    GenreId 5: La citta incantata
+```
+
+**Nessun `GROUP BY` nell'SQL.** EF scarica tutti i film con una `SELECT` piatta e il raggruppamento avviene **in C#** — e siccome è LINQ sincrono, il thread resta bloccato per tutta la durata della query. Se serve un raggruppamento fatto **dal database**, la strada è `GroupBy` dentro l'`IQueryable` (sezione 12.5), non `ToLookup`.
 
 ### `ToListAsync` — il caso normale
 
@@ -185,17 +220,17 @@ ToDictionaryAsync() -> 5 chiavi: Fantascienza, Dramma, Thriller, Commedia, Anima
 
 Il perché la chiave sia `g.Name` e non `g.Id` è la logica dell'idempotenza, spiegata nel [capitolo 10](10-database-sql-server.md): l'Id lo assegna il database, il nome no.
 
-> ⚠️ **`ToHashSet()` non ha una versione async, e non è un caso.** Non è un metodo di EF Core: è LINQ normale, e lavora **su dati già in memoria**. Nel seeder infatti compare **dopo** un `ToListAsync`, con le parentesi che fanno tutta la differenza:
+> **Il seeder usa la versione LINQ, e le parentesi dicono perché.** Qui `ToHashSet()` non è quello di EF: arriva **dopo** un `ToListAsync`, cioè quando i dati sono già in RAM e non c'è più nessun database da interrogare.
 >
 > ```csharp
 > var existing = (await context.MovieActors
 >         .Select(ma => new { ma.MovieId, ma.ActorId })
 >         .ToListAsync(cancellationToken))    // <- qui finisce SQL
 >     .Select(ma => (ma.MovieId, ma.ActorId)) // <- da qui è tutto in RAM
->     .ToHashSet();
+>     .ToHashSet();                           // <- LINQ, non EF: non c'è niente da attendere
 > ```
 >
-> Il primo `.Select` diventa SQL, il secondo gira in C#. `ToListAsync` è il confine.
+> Il primo `.Select` diventa SQL, il secondo gira in C#. **`ToListAsync` è il confine**, e tutto ciò che sta dopo la parentesi chiusa vive in memoria. Un `ToHashSetAsync` qui non avrebbe senso: non si aspetta nessun I/O.
 
 ### `ToQueryString()` — il metodo che ho usato per scrivere questo capitolo
 

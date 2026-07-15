@@ -448,6 +448,18 @@
  copia di Reviews un punteggio 99 verrebbe ACCETTATO (nella tabella vera no,
  errore 547). Va bene per una fotografia temporanea, non come rimpiazzo.
 
+ ---- SELECT INTO #temp: tabella temporanea (l'uso piu' comune al lavoro) ----
+
+ Con la # la tabella nasce in tempdb, e' solo TUA e sparisce da sola a fine
+ sessione. Non lascia spazzatura nel database.
+
+   # una sola # = privata della tua sessione.  ## = globale (raro, evitala)
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -W -Q "SET NOCOUNT ON; SELECT m.Title, m.DurationMinutes, g.Name AS Genere INTO #FilmLunghi FROM Movies m JOIN Genres g ON g.Id = m.GenreId WHERE m.DurationMinutes > 150; SELECT * FROM #FilmLunghi;"
+
+ ATTENZIONE: una #temp sparisce a fine sessione, quindi NON va bene come copia
+ di sicurezza prima di un'operazione rischiosa: sparirebbe proprio quando serve.
+ Per quella usa una tabella vera (SELECT * INTO Movies_Backup FROM Movies).
+
  ---- INSERT INTO ... SELECT: copia righe in una tabella che ESISTE gia' ----
 
    sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -Q "INSERT INTO MoviesArchivio (Title, DurationMinutes, ReleaseDate) SELECT Title, DurationMinutes, ReleaseDate FROM Movies WHERE ReleaseDate < '2010-01-01';"

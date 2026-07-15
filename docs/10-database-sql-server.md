@@ -723,6 +723,55 @@ Msg 544: Cannot insert explicit value for identity column in table 'ReviewsCopia
 when IDENTITY_INSERT is set to OFF.
 ```
 
+### `SELECT ... INTO #temp` — l'uso che se ne fa davvero al lavoro
+
+Fin qui `SELECT INTO` ha creato tabelle **vere**, che restano nel database finché non le cancello. Nella pratica non è quasi mai quello che voglio: una tabella di appoggio creata per un'analisi e lasciata lì è spazzatura che qualcuno troverà tra sei mesi chiedendosi cosa sia.
+
+Per questo esistono le **tabelle temporanee**. Basta un `#` davanti al nome:
+
+```sql
+SELECT m.Title, m.DurationMinutes, g.Name AS Genere
+INTO #FilmLunghi
+FROM Movies m JOIN Genres g ON g.Id = m.GenreId
+WHERE m.DurationMinutes > 150;
+
+SELECT * FROM #FilmLunghi;
+```
+```
+Title              DurationMinutes  Genere
+-----------------  ---------------  ------------
+Dune               155              Fantascienza
+Blade Runner 2049  164              Fantascienza
+Oppenheimer        180              Dramma
+```
+
+Il `#` cambia tre cose:
+
+1. **La tabella non nasce in `MovieManagerDb`**: vive in `tempdb`, il database di servizio di SQL Server.
+2. **È solo mia.** Un altro collega può creare la *sua* `#FilmLunghi` nello stesso momento senza collisioni.
+3. **Sparisce da sola** alla fine della sessione. Niente da pulire, niente da dimenticare.
+
+Il punto 2 è più interessante di quanto sembri, e si vede guardando dove finisce davvero:
+
+```sql
+SELECT name FROM tempdb.sys.tables WHERE name LIKE '#FilmLunghi%';
+```
+```
+#FilmLunghi__________________________________________________________...000000000002
+```
+
+**Il nome vero è storpiato** con un suffisso numerico. È il trucco con cui SQL Server tiene separate le `#FilmLunghi` di sessioni diverse: io scrivo `#FilmLunghi` e lui risolve verso *la mia*. Da qui la regola pratica:
+
+| Sintassi | Chi la vede | Quando muore |
+|----------|-------------|--------------|
+| `#tabella` | **solo la mia sessione** | quando chiudo la sessione |
+| `##tabella` | **tutte** le sessioni | quando chiude chi l'ha creata |
+| `tabella` (senza `#`) | tutti, **per sempre** | quando la cancello io |
+
+`##` (globale) è raro e quasi sempre un errore: se due persone la creano insieme, la seconda va in errore. Nel dubbio, **una sola `#`**.
+
+> Le tabelle temporanee sono il vero motivo per cui `SELECT INTO` esiste ed è comodo: prendo un pezzo di dati, ci lavoro sopra con calma in più passaggi, e alla fine se ne va da sola. Per una copia di sicurezza prima di un'operazione rischiosa, invece, serve una tabella **vera** — una temporanea sparirebbe proprio nel momento in cui potrebbe servire.
+
 ### `INSERT INTO ... SELECT` — la tabella esiste già
 
 Quando la destinazione c'è, si usa la forma normale dell'`INSERT` con una `SELECT` al posto dei `VALUES`:
