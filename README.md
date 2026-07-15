@@ -13,17 +13,22 @@ L'obiettivo non è solo "far funzionare le cose", ma capire **perché** si strut
 - [Risorse utilizzate](#risorse-utilizzate)
 - [Traccia e flow dell'esercizio](#traccia-e-flow-dellesercizio)
 - [Architettura generale](#architettura-generale)
+- [Il database in breve](#il-database-in-breve)
 - [Come avviare il progetto](#come-avviare-il-progetto)
-- **Documentazione passo-passo** (una parte per file):
+- **Documentazione passo-passo** — come ho costruito il progetto, una parte per file:
   1. [Struttura della solution e architettura a strati](docs/01-struttura-e-architettura.md)
   2. [DAL — Le entità](docs/02-dal-entita.md)
   3. [DAL — Il DbContext (Entity Framework Core)](docs/03-dal-dbcontext.md)
   4. [DAL — Generic Repository e Unit of Work](docs/04-dal-repository-unitofwork.md)
-  5. [BLL — I Model e l'interfaccia IModelWithId](docs/05-bll-models.md)
+  5. [BLL — I Model, IModelWithId e la validazione](docs/05-bll-models.md)
   6. [BLL — Generic Service, MovieActorService, async/await](docs/06-bll-services.md)
   7. [PL — AutoMapper e il MappingProfile](docs/07-plapi-automapper-mapping.md)
   8. [PL — I Controller API](docs/08-plapi-controllers.md)
   9. [PL — Program.cs, Dependency Injection e Scalar](docs/09-plapi-program-di-scalar.md)
+- **Approfondimenti pratici** — non "come l'ho costruito" ma "come si usa e cosa c'è sotto":
+  10. [Il database — SQL Server, schema e SQL dalle basi alle join](docs/10-database-sql-server.md)
+  11. [Scalar — provare le API dal browser](docs/11-scalar-e-prova-api.md)
+- [`COMANDI.txt`](COMANDI.txt) — tutti i comandi CRUD pronti all'uso (Scalar, PowerShell, sqlcmd)
 
 ---
 
@@ -105,6 +110,37 @@ erDiagram
 
 ---
 
+## Il database in breve
+
+Il DBMS è **SQL Server**, nell'edizione **LocalDB** (quella leggera che si installa con Visual Studio e si avvia da sola, senza servizi né configurazione).
+
+| | |
+|---|---|
+| **Istanza** | `(localdb)\MSSQLLocalDB` |
+| **Database** | `MovieManagerDb` |
+| **Autenticazione** | Windows (`Trusted_Connection=True`) — niente utente e password |
+| **Schema** | generato da EF Core con `EnsureCreated()`, senza migration |
+| **Dati** | inseriti da `MovieDbSeeder` a ogni avvio, in modo idempotente |
+| **Tabelle** | `Genres`, `Directors`, `Actors`, `Movies`, `MovieActors`, `Reviews` |
+
+Non c'è niente da installare né da creare a mano: **al primo `dotnet run` il database viene creato e popolato da solo**. Dopo l'avvio ci sono 5 generi, 5 registi, 10 attori, 6 film, 11 collegamenti di cast e 7 recensioni.
+
+Tre cose che vale la pena sapere subito, perché sono quelle su cui si sbatte:
+
+- **L'`Id` lo assegna il database** (colonna `IDENTITY`). Nelle POST il campo `id` del body viene ignorato. L'unica eccezione è `MovieActors`, la cui chiave `(movieId, actorId)` la scegli tu.
+- **Le `DELETE` cancellano a cascata.** Tutte le foreign key sono in `ON DELETE CASCADE` e la cascata è a più livelli: cancellare un *genere* si porta via i suoi film e, con loro, le loro recensioni e il loro cast. Misurato: eliminare il solo genere "Fantascienza" fa sparire 2 film, 3 recensioni e 5 righe di cast.
+- **Le `PUT` sostituiscono l'intera risorsa.** I campi omessi dal body diventano `null`, non restano al valore precedente.
+
+Per guardare dentro il database senza passare dall'applicazione:
+
+```powershell
+sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -Q "SELECT Id, Title FROM Movies;" -W
+```
+
+📖 **Tutto il resto — schema completo, come EF traduce le classi in tabelle, SQL dalle basi alle join, subquery e window function, transazioni, vincoli e seeder — sta nel [capitolo 10](docs/10-database-sql-server.md).** I comandi pronti da copiare sono in [`COMANDI.txt`](COMANDI.txt).
+
+---
+
 ## Come avviare il progetto
 
 ### 1) Prerequisiti
@@ -122,9 +158,20 @@ erDiagram
 }
 ```
 
-Al primo avvio, `Program.cs` chiama `db.Database.EnsureCreated()`: se il database `MovieManagerDb` non esiste, viene creato automaticamente con tutte le tabelle e i vincoli. Non serve lanciare migration a mano.
+Al primo avvio `Program.cs` fa due cose in fila:
 
-> Per ripartire da zero (database vuoto) basta eliminare il database `MovieManagerDb` dal LocalDB (per esempio da Visual Studio → SQL Server Object Explorer, oppure con `sqlcmd`) e riavviare: verrà ricreato.
+1. `db.Database.EnsureCreated()` — se `MovieManagerDb` non esiste, lo crea con tutte le tabelle e i vincoli. Nessuna migration da lanciare a mano.
+2. `MovieDbSeeder.SeedAsync(db)` — inserisce i dati di esempio che mancano.
+
+Il seeder è **idempotente**: confronta la chiave naturale (il nome del genere, il titolo del film) e non l'Id, quindi a ogni riavvio non duplica niente e non sovrascrive le righe aggiunte da me. Se cancello un dato del seed, al riavvio torna; i dati miei restano dove sono.
+
+> **Ripartire da zero.** Siccome `EnsureCreated()` non aggiorna uno schema esistente, per rivedere una modifica alle entità (o per tornare ai soli dati del seed) va eliminato il database. Fermata l'app:
+>
+> ```powershell
+> sqlcmd -S "(localdb)\MSSQLLocalDB" -Q "ALTER DATABASE MovieManagerDb SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE MovieManagerDb;"
+> ```
+>
+> Al riavvio viene ricreato e ripopolato. In alternativa, da Visual Studio → SQL Server Object Explorer.
 
 ### 3) Avvio
 
@@ -134,15 +181,24 @@ Dalla cartella della solution:
 dotnet run --project MovieManager.PL.API
 ```
 
-Il profilo `https` di `launchSettings.json` apre in automatico il browser sulla pagina Scalar.
+Il browser si apre da solo sulla pagina Scalar.
 
 ### 4) Endpoint utili
 
-- **UI Scalar:** `https://localhost:7109/scalar`
-- **Documento OpenAPI (JSON):** `https://localhost:7109/openapi/v1.json`
-- **API REST:** `https://localhost:7109/api/movies`, `/api/genres`, `/api/directors`, `/api/actors`, `/api/reviews`, `/api/movieactors`
+`launchSettings.json` ha due profili, e `dotnet run` senza argomenti usa il **primo**, cioè `http`:
 
-(Le porte dipendono dal `launchSettings.json` attivo.)
+| Profilo | Comando | Scalar |
+|---------|---------|--------|
+| `http` (predefinito) | `dotnet run --project MovieManager.PL.API` | `http://localhost:5140/scalar` |
+| `https` | `dotnet run --project MovieManager.PL.API --launch-profile https` | `https://localhost:7109/scalar` |
+
+Con il profilo predefinito:
+
+- **UI Scalar:** `http://localhost:5140/scalar`
+- **Documento OpenAPI (JSON):** `http://localhost:5140/openapi/v1.json`
+- **API REST:** `http://localhost:5140/api/movies`, `/api/genres`, `/api/directors`, `/api/actors`, `/api/reviews`, `/api/movieactors`
+
+> L'avviso `Failed to determine the https port for redirect` che compare nel log con il profilo `http` è innocuo: `UseHttpsRedirection()` cerca una porta HTTPS che con quel profilo non è in ascolto.
 
 ---
 

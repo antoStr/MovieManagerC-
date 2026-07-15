@@ -125,7 +125,9 @@ Sono i vincoli sui campi principali: `IsRequired()` genera una colonna `NOT NULL
 .ToTable(t => t.HasCheckConstraint("CK_Review_Score", "[Score] >= 1 AND [Score] <= 10"));
 ```
 
-Questo è un **vincolo di controllo** vero, applicato dal database: qualsiasi tentativo di salvare una recensione con punteggio fuori dall'intervallo 1–10 viene **rifiutato** da SQL Server con un errore. L'ho verificato: inviando una recensione con `score = 50`, l'API risponde `500` perché il database blocca l'inserimento.
+Questo è un **vincolo di controllo** vero, applicato dal database: qualsiasi tentativo di salvare una recensione con punteggio fuori dall'intervallo 1–10 viene **rifiutato** da SQL Server, da qualunque parte arrivi — anche da un `INSERT` scritto a mano che scavalca l'applicazione.
+
+> **Aggiornamento.** All'inizio questo vincolo era l'**unica** difesa, e si vedeva: inviando `score = 50` l'API rispondeva `500`, perché l'eccezione del database arrivava fino al client come errore del server. Ho poi aggiunto `[Range(1, 10)]` sul `ReviewModel` ([capitolo 5](05-bll-models.md)), così la richiesta viene fermata **prima** con un `400` e un messaggio leggibile. Il check constraint resta comunque: è la rete di sicurezza che vale anche per chi non passa dall'API. Due difese sullo stesso vincolo a due livelli diversi — quella applicativa spiega, quella del database garantisce.
 
 > **Perché serviva il pacchetto `Microsoft.EntityFrameworkCore.Relational`?** I metodi `ToTable(...)` e `HasCheckConstraint(...)` sono estensioni "relazionali" (riguardano tabelle e SQL). Il pacchetto base `Microsoft.EntityFrameworkCore` non le contiene, quindi ho aggiunto `Relational` al DAL. Senza, il progetto non compila (`'EntityTypeBuilder<Review>' non contiene una definizione di 'ToTable'`).
 
@@ -139,5 +141,9 @@ Il database fisico va creato da qualche parte. Ci sono due approcci:
 - **`EnsureCreated()`** — Al primo avvio EF guarda il modello e, se il database non esiste, lo crea di sana pianta con tutte le tabelle e i vincoli. Semplice e perfetto per un esercizio in locale.
 
 In questo progetto uso `EnsureCreated()` nel `Program.cs`. Il rovescio della medaglia: `EnsureCreated` **non** aggiorna uno schema già esistente. Quindi se in futuro modifico un'entità, per rivedere la modifica devo eliminare il database `MovieManagerDb` e riavviare (verrà ricreato), oppure passare alle migrations.
+
+Subito dopo `EnsureCreated()` gira `MovieDbSeeder` (`Data/MovieDbSeeder.cs`), che riempie il catalogo di dati di esempio. Lo schema e i dati nascono così in due passaggi distinti: struttura prima, contenuto poi. Il dettaglio di come lo fa senza mai duplicare niente è nel [capitolo 10](10-database-sql-server.md).
+
+> Per vedere **cosa** ha generato davvero questo `OnModelCreating` — tipi delle colonne, vincoli, chiavi esterne letti dal database vero — c'è il [capitolo 10](10-database-sql-server.md).
 
 [➡ Prossima parte: DAL — Generic Repository e Unit of Work](04-dal-repository-unitofwork.md)

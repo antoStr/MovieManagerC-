@@ -27,6 +27,7 @@ using MovieManager.DAL.Data;
 using MovieManager.DAL.Entities;
 using MovieManager.DAL.Repositories;
 using MovieManager.DAL.Repositories.Interfaces;
+using MovieManager.PL.API.Configurations;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -34,6 +35,10 @@ var builder = WebApplication.CreateBuilder(args);
 // --- Controller + OpenAPI nativo .NET 10 ---
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
+
+// --- Violazioni dei vincoli di database -> 400/409 invece di 500 ---
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<DatabaseExceptionHandler>();
 
 // --- DbContext su SQL Server / LocalDB ---
 builder.Services.AddDbContext<MovieDbContext>(options =>
@@ -59,14 +64,17 @@ builder.Services.AddAutoMapper(typeof(Program).Assembly);
 
 var app = builder.Build();
 
-// In sviluppo crea il database/schema se non esiste ancora (LocalDB).
+// Crea il database/schema se non esiste ancora (LocalDB) e lo popola di dati di esempio.
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<MovieDbContext>();
     db.Database.EnsureCreated();
+    await MovieDbSeeder.SeedAsync(db);
 }
 
 // Pipeline HTTP
+app.UseExceptionHandler();          // vincoli DB violati -> 400/409
+
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();               // /openapi/v1.json
@@ -133,17 +141,49 @@ Dice ad AutoMapper di scansionare l'assembly della API alla ricerca dei `Profile
 
 ---
 
-## 9.3 EnsureCreated: il database nasce all'avvio
+## 9.3 EnsureCreated e seeder: database e dati nascono all'avvio
 
 ```csharp
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<MovieDbContext>();
-    db.Database.EnsureCreated();
+    db.Database.EnsureCreated();        // lo schema
+    await MovieDbSeeder.SeedAsync(db);  // i dati
 }
 ```
 
 Al primo avvio, se `MovieManagerDb` non esiste in LocalDB, viene creato con tutte le tabelle, le relazioni e il check constraint sul punteggio. Uso uno *scope* esplicito perché il `DbContext` è Scoped e qui, fuori da una richiesta HTTP, uno scope non esiste ancora: me lo creo a mano. (Limiti e alternative di `EnsureCreated` nel [capitolo 3](03-dal-dbcontext.md).)
+
+Subito dopo, `MovieDbSeeder` riempie il catalogo (5 generi, 5 registi, 10 attori, 6 film, 11 righe di cast, 7 recensioni), così l'app non parte mai su un database vuoto e ho subito dati veri su cui provare le query. Il seeder è **idempotente**: gira a ogni avvio senza duplicare niente, perché confronta la chiave naturale (nome, titolo) e non l'Id. Come e perché è spiegato nel [capitolo 10](10-database-sql-server.md).
+
+L'`await` qui funziona perché `Program.cs` usa i *top-level statements*: il compilatore ci costruisce intorno un `Main` asincrono.
+
+---
+
+## 9.4 Il gestore delle eccezioni di database
+
+```csharp
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<DatabaseExceptionHandler>();
+// ...
+app.UseExceptionHandler();
+```
+
+Alcuni errori li può scoprire **solo** il database. Che `genreId = 999` non esista non lo sa nessun attributo di validazione: lo scopre SQL Server quando prova a scrivere e la chiave esterna non trova la riga. Senza un gestore, quell'eccezione risaliva tutta la pipeline e usciva come **`500 Internal Server Error`**: un errore *del client* travestito da bug *del server*.
+
+`DatabaseExceptionHandler` (`Configurations/DatabaseExceptionHandler.cs`) implementa `IExceptionHandler` e guarda il **numero di errore** di SQL Server:
+
+| Numero SQL | Significato | Risposta |
+|-----------|-------------|----------|
+| **547** | violazione di foreign key o di check constraint | `400 Bad Request` |
+| **2627 / 2601** | chiave primaria o indice unico duplicati | `409 Conflict` |
+| altro | non lo riconosco | lo lascio passare → resta un `500` vero |
+
+L'ultima riga è la più importante: il gestore traduce **solo** ciò che riconosce. Un `NullReferenceException` deve continuare a essere un `500`, perché quello *è* un bug mio. Un gestore che ingoia tutto e risponde sempre `400` nasconderebbe i problemi veri.
+
+### Dove va `UseExceptionHandler()` nella pipeline
+
+Va **prima** degli endpoint. I middleware si annidano: l'eccezione lanciata in fondo (nel controller) risale verso l'esterno e viene catturata dal primo gestore che incontra. In sviluppo ASP.NET aggiunge da solo la *developer exception page* in cima alla pipeline — è quella che produceva le pagine di errore lunghissime che vedevo all'inizio. Mettendo `UseExceptionHandler()` più internamente, il mio gestore intercetta per primo le violazioni di vincolo e risponde `400`/`409`; la pagina di sviluppo resta a fare il suo lavoro per tutto il resto.
 
 ---
 
@@ -178,31 +218,50 @@ In `Properties/launchSettings.json`, nel profilo `https`, ho impostato l'apertur
 }
 ```
 
-Così `dotnet run` apre subito `https://localhost:7109/scalar`.
+> ⚠️ **Quale porta esce davvero?** I profili sono due: `http` (porta **5140**) e `https` (**7109** + 5140). `dotnet run` senza argomenti usa il **primo profilo del file**, cioè `http`: apre `http://localhost:5140/scalar`, non la 7109. Per il profilo https serve dirlo esplicitamente:
+>
+> ```powershell
+> dotnet run --launch-profile https     # https://localhost:7109/scalar
+> ```
+>
+> Da qui viene anche l'avviso `Failed to determine the https port for redirect` che compare nel log con il profilo `http`: `UseHttpsRedirection()` vorrebbe rimandare su HTTPS ma non c'è nessuna porta HTTPS in ascolto. In locale è innocuo.
 
 ---
 
-## 9.4 Prova sul campo (verifica end-to-end)
+## 9.5 Prova sul campo (verifica end-to-end)
 
-Ho avviato l'app e testato il flusso completo. Tutto risponde come previsto:
+Ho avviato l'app e testato il flusso completo. Il percorso felice:
 
 | Chiamata | Esito |
 |----------|-------|
-| `GET /openapi/v1.json` | `200` (documento OpenAPI generato) |
+| `GET /openapi/v1.json` | `200` (documento OpenAPI, 13 percorsi / 30 operazioni) |
 | `GET /scalar` | `302` → apre la UI Scalar |
-| `GET /api/genres` (vuoto) | `200 []` |
+| `GET /api/genres` | `200` con i generi del seeder |
 | `POST /api/genres` | `201` con l'`id` generato |
 | `POST /api/directors` | `201` |
 | `POST /api/movies` (con FK a genere e regista) | `201` — integrità referenziale ok |
 | `GET /api/movies/1` | `200` (rilettura) |
 | `GET /api/movies/999` | `404` |
 | `POST /api/movieactors` (chiave composta) | `201` |
-| `GET /api/movieactors/movie/1` | `200` con l'associazione |
-| `DELETE /api/movieactors/1/1` | `204`, poi `GET` → `404` |
+| `GET /api/movieactors/movie/1` | `200` con il cast |
+| `DELETE /api/movieactors/1/2` | `204`, poi `GET` → `404` |
 | `POST /api/reviews` con `score = 8` | `201` |
-| `POST /api/reviews` con `score = 50` | `500` — il check constraint 1–10 **rifiuta** l'inserimento |
 
-Questo conferma che tutti i livelli collaborano correttamente: Controller → Service → AutoMapper → Repository → Unit of Work → EF Core → LocalDB, comprese le relazioni, la chiave composta e i vincoli di database.
+E, più interessante, i percorsi di errore — quelli che dicono se le difese funzionano davvero:
+
+| Chiamata sbagliata | Esito | Chi l'ha fermata |
+|--------------------|-------|------------------|
+| `POST /api/actors` con body `{}` | `400` + "Il nome è obbligatorio." | `[Required]` sul model |
+| `POST /api/reviews` con `score = 99` | `400` + "Il punteggio deve essere compreso tra 1 e 10." | `[Range(1, 10)]` sul model |
+| `POST /api/genres` con nome di 101 caratteri | `400` | `[StringLength(100)]` |
+| `POST /api/movies` con `genreId = 999` | `400` "Vincolo di database non rispettato" | `DatabaseExceptionHandler` (SQL 547) |
+| `POST /api/movieactors` con coppia già esistente | `409` "Risorsa già esistente" | `DatabaseExceptionHandler` (SQL 2627) |
+| `PUT /api/actors/1` con `id = 2` nel body | `400` | il controllo `id != model.Id` nel controller |
+| `DELETE /api/actors/999` | `404` | il `bool` di ritorno del service |
+
+Le ultime due tabelle raccontano l'architettura meglio di qualsiasi diagramma: ogni errore viene fermato al livello **che ha l'informazione per farlo**. Il model sa che il nome è obbligatorio; il controller sa che gli id devono coincidere; il service sa che la riga non esiste; solo il database sa che il genere 999 non c'è. Nessuno di questi controlli poteva stare da un'altra parte.
+
+Il flusso completo Controller → Service → AutoMapper → Repository → Unit of Work → EF Core → LocalDB funziona, relazioni, chiave composta e vincoli inclusi.
 
 ![UI Scalar del progetto](../res/scalar.png)
 
@@ -217,6 +276,8 @@ Questo conferma che tutti i livelli collaborano correttamente: Controller → Se
 5. ✅ `MappingProfile` con le sei mappe `ReverseMap`.
 6. ✅ Registrazioni DI con scope **Scoped**; AutoMapper registrato sull'assembly della API.
 7. ✅ OpenAPI + Scalar attivi in sviluppo; avvio diretto su `/scalar`.
-8. ✅ La solution compila e l'applicazione gira e risponde correttamente.
+8. ✅ `EnsureCreated` + `MovieDbSeeder`: schema e dati di esempio all'avvio.
+9. ✅ Validazione sui model e violazioni di vincolo tradotte in `400`/`409`.
+10. ✅ La solution compila e l'applicazione gira e risponde correttamente.
 
-[⬅ Torna all'indice](../README.md)
+[➡ Prossima parte: Il database — SQL Server, schema e SQL](10-database-sql-server.md)

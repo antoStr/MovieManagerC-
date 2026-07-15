@@ -106,20 +106,23 @@ Alla fine di tutto il progetto avrà questa forma (le cartelle `bin/` e `obj/` s
 MovieManager/
 ├── MovieManager.slnx
 ├── README.md
+├── COMANDI.txt                   <-- comandi pronti (Scalar, PowerShell, sqlcmd)
 ├── docs/                         <-- questa documentazione
 ├── MovieManager.DAL/
 │   ├── Entities/                 (Genre, Director, Actor, Movie, MovieActor, Review)
-│   ├── Data/                     (MovieDbContext)
+│   ├── Data/                     (MovieDbContext, MovieDbSeeder)
 │   └── Repositories/             (GenericRepository, UnitOfWork, MovieActorRepository + Interfaces)
 ├── MovieManager.BLL/
 │   ├── Models/                   (*Model + IModelWithId)
 │   └── Services/                 (GenericService, MovieActorService + Interfaces)
 └── MovieManager.PL.API/
     ├── Controllers/              (Movies, Genres, Directors, Actors, Reviews, MovieActors)
-    ├── Configurations/           (MappingProfile)
+    ├── Configurations/           (MappingProfile, DatabaseExceptionHandler)
     ├── Program.cs
     └── appsettings.json
 ```
+
+> I file `MovieDbSeeder` e `DatabaseExceptionHandler` non fanno parte della traccia originale: li ho aggiunti dopo, il primo per avere dati di esempio a ogni avvio ([capitolo 10](10-database-sql-server.md)), il secondo per non far uscire come `500` gli errori di richiesta ([capitolo 9](09-plapi-program-di-scalar.md)).
 
 ---
 

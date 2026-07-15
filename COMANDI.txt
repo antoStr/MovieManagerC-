@@ -2,6 +2,11 @@
  MOVIEMANAGER - GUIDA AI COMANDI CRUD (Scalar / PowerShell / SQL)
 ================================================================================
 
+ Questo file e' il prontuario: comandi da copiare, senza spiegazioni.
+ Le spiegazioni stanno nella documentazione:
+   docs/10-database-sql-server.md  -> il database, SQL dalle basi alle join
+   docs/11-scalar-e-prova-api.md   -> Scalar e la prova delle API
+
  API .......... http://localhost:5140
  Scalar ....... http://localhost:5140/scalar
  OpenAPI ...... http://localhost:5140/openapi/v1.json
@@ -63,8 +68,10 @@
    200 OK        -> GET andato a buon fine, il body contiene i dati
    201 Created   -> POST andato a buon fine, il body contiene la riga creata
    204 No Content-> PUT o DELETE andati a buon fine (nessun body: e' normale)
-   400 Bad Request -> nella PUT l'id nell'URL e quello nel body sono diversi
+   400 Bad Request -> campo obbligatorio mancante, valore fuori intervallo,
+                      id collegato inesistente, oppure id discordante nella PUT
    404 Not Found -> l'id richiesto non esiste
+   409 Conflict  -> riga gia' esistente (coppia MovieActors duplicata)
 
  NOTA sulla POST: Scalar precompila il body di esempio includendo "id".
  Quel campo ora viene ignorato: l'Id lo assegna sempre il database.
@@ -480,21 +487,40 @@
 
    Invoke-RestMethod "$base/Movies" | Where-Object genreId -eq 1 | Format-Table id, title
 
+ --- I campi obbligatori sono validati: 400 con il dettaglio ---
+ Una POST con body vuoto {} NON crea piu' righe fantasma: risponde 400 ed elenca
+ i campi mancanti, uno per uno.
+
+   POST /api/Actors  con  {}
+   -> 400 {"errors":{"FirstName":["Il nome e' obbligatorio."],
+                     "LastName":["Il cognome e' obbligatorio."]}}
+
+ Regole applicate (le stesse dei vincoli sul database):
+   firstName, lastName, name, title, language, reviewerName  -> obbligatori
+   nomi e cognomi, nome genere, nome recensore                -> max 100 caratteri
+   titolo del film                                            -> max 200 caratteri
+   score                                                      -> da 1 a 10
+   genreId, directorId, movieId, actorId                      -> almeno 1
+
  --- Il punteggio delle recensioni deve stare tra 1 e 10 ---
- C'e' un vincolo CHECK sul database (CK_Review_Score). Un valore fuori range
- non da' un 400 gentile: fa fallire il salvataggio con un errore 500.
+ Ora risponde 400 con "Il punteggio deve essere compreso tra 1 e 10.".
+ La difesa e' doppia: [Range(1,10)] sul model ferma la richiesta prima, e il
+ check constraint CK_Review_Score sul database la blocca comunque anche se
+ arrivasse da sqlcmd, saltando l'API.
 
- --- genreId / directorId inesistenti ---
- Una POST su Movies con un genreId o un directorId che non esiste viola la
- foreign key e risponde 500, non 400. Controlla prima gli Id disponibili con
- GET /api/Genres e GET /api/Directors.
+ --- genreId / directorId inesistenti -> 400 ---
+ Una POST su Movies con un genreId o un directorId che non esiste risponde:
 
- --- Non c'e' validazione sui campi obbligatori ---
- firstName e lastName sono "required" solo come NOT NULL sul database, ma la
- stringa vuota lo soddisfa: una POST con body vuoto {} crea davvero un attore
- senza nome. Se ne trovi uno, cancellalo cosi':
+   400 {"title":"Vincolo di database non rispettato", ...}
 
-   Invoke-RestMethod "$base/Actors/12" -Method Delete
+ Che l'id 999 non esista lo sa solo il database, non la validazione del model:
+ l'errore viene intercettato dal DatabaseExceptionHandler e tradotto in 400.
+ Controlla prima gli Id disponibili con GET /api/Genres e GET /api/Directors.
+
+ --- Coppia MovieActors duplicata -> 409 ---
+ Una POST su /api/MovieActors con una coppia (movieId, actorId) che esiste gia'
+ risponde 409 "Risorsa gia' esistente". Per modificare un collegamento
+ esistente usa PUT, non POST.
 
  --- Il formato delle date ---
  birthDate e releaseDate sono DateOnly: vanno scritte come "aaaa-mm-gg"

@@ -25,16 +25,24 @@ Regola che ho seguito: ogni model contiene i **campi semplici** e le **chiavi es
 `GenreModel`:
 
 ```csharp
+using System.ComponentModel.DataAnnotations;
+
 namespace MovieManager.BLL.Models
 {
     public class GenreModel : IModelWithId
     {
-        public int Id               { get; set; }
-        public string Name          { get; set; } = string.Empty;
-        public string? Description  { get; set; }
+        public int Id { get; set; }
+
+        [Required(ErrorMessage = "Il nome del genere è obbligatorio.")]
+        [StringLength(100, ErrorMessage = "Il nome non può superare i 100 caratteri.")]
+        public string Name { get; set; } = string.Empty;
+
+        public string? Description { get; set; }
     }
 }
 ```
+
+(Gli attributi `[Required]` e `[StringLength]` sono la validazione: ne parlo nella sezione 5.4.)
 
 `MovieModel` — ha i campi del film e le due chiavi esterne `GenreId`/`DirectorId`, ma **non** gli oggetti `Genre`/`Director` né le collezioni:
 
@@ -114,10 +122,64 @@ Proprio perché non ha un `Id` singolo, non può essere gestito dal `GenericServ
 
 ---
 
+## 5.4 La validazione: le DataAnnotations
+
+Le **DataAnnotations** sono attributi che dichiarano le regole di un campo. Le ho aggiunte dopo, e per un motivo concreto: senza, una `POST /api/Actors` con body **`{}`** rispondeva `201` e creava davvero un attore **senza nome**. Nome e cognome sono `NOT NULL` sul database, ma la stringa vuota soddisfa `NOT NULL` benissimo: il database era contento e il dato era spazzatura.
+
+| Attributo | Cosa impone | Dove l'ho messo |
+|-----------|-------------|-----------------|
+| `[Required]` | non nullo **e non stringa vuota** | `FirstName`, `LastName`, `Name`, `Title`, `Language`, `ReviewerName` |
+| `[StringLength(n)]` | lunghezza massima | gli stessi campi, con lo stesso `n` del `HasMaxLength` |
+| `[Range(min, max)]` | intervallo numerico | `Score` (1–10), e le chiavi esterne (`>= 1`) |
+
+```csharp
+[Required(ErrorMessage = "Il nome è obbligatorio.")]
+[StringLength(100, ErrorMessage = "Il nome non può superare i 100 caratteri.")]
+public string FirstName { get; set; } = string.Empty;
+```
+
+### (?) Chi esegue questi controlli? Nel controller non c'è niente
+
+È l'attributo **`[ApiController]`** sui controller ([capitolo 8](08-plapi-controllers.md)). Prima ancora di entrare nel metodo, ASP.NET Core valida il model; se qualcosa non torna, l'azione **non viene mai eseguita** e parte in automatico un `400` con l'elenco degli errori:
+
+```json
+{
+  "title": "One or more validation errors occurred.",
+  "status": 400,
+  "errors": {
+    "FirstName": [ "Il nome è obbligatorio." ],
+    "LastName":  [ "Il cognome è obbligatorio." ]
+  }
+}
+```
+
+Nessuna riga di codice mia: gli attributi sono dichiarativi, il resto lo fa il framework.
+
+### Il criterio che ho seguito: rispecchiare il database
+
+Le regole dei model **combaciano con i vincoli veri** delle tabelle: `[StringLength(100)]` dove il `DbContext` dice `HasMaxLength(100)`, `[Range(1, 10)]` dove c'è il check constraint `CK_Review_Score`. Non ho inventato regole nuove né messo limiti dove il database non ne ha (`Country` è `nvarchar(max)`, quindi nessun `[StringLength]`).
+
+Sembra una duplicazione, ma i due livelli fanno lavori diversi:
+
+- **il model** rifiuta subito e **spiega** cosa c'è di sbagliato, in italiano, campo per campo;
+- **il database** garantisce che il dato resti valido **comunque**, anche per chi non passa dall'API (un `INSERT` da `sqlcmd`, un altro programma domani).
+
+Il primo è cortesia verso il client, il secondo è integrità dei dati. Servono entrambi.
+
+> ⚠️ **Quello che le DataAnnotations non possono fare.** `[Range(1, int.MaxValue)]` su `GenreId` blocca `0` e i negativi, ma **non** può sapere se il genere `999` esiste davvero: quella risposta ce l'ha solo il database. Per questo un `genreId` inesistente viene intercettato più avanti, dal `DatabaseExceptionHandler` ([capitolo 11](11-scalar-e-prova-api.md)), che traduce la violazione di chiave esterna in un `400` invece di lasciarla uscire come `500`.
+
+### Un effetto collaterale gradito
+
+Gli stessi attributi finiscono nel documento **OpenAPI** e quindi in **Scalar**: `[Required]` diventa `"required": ["firstName"]`, `[StringLength(100)]` diventa `"maxLength": 100`, `[Range(1, 10)]` diventa `"minimum": 1, "maximum": 10`. Un attributo, tre risultati: validazione, documentazione e aiuto nell'interfaccia. Il dettaglio nel [capitolo 11](11-scalar-e-prova-api.md).
+
+---
+
 ## Verifica finale
 
 - Ogni model ha proprietà coerenti con la sua entità.
 - I model a chiave singola implementano `IModelWithId`.
 - `MovieActorModel` **non** implementa `IModelWithId`.
+- I campi obbligatori hanno `[Required]`, con limiti allineati a quelli del `DbContext`.
+- Una `POST` con body `{}` risponde `400` e non crea niente.
 
 [➡ Prossima parte: BLL — I Service](06-bll-services.md)

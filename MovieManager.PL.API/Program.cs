@@ -6,6 +6,7 @@ using MovieManager.DAL.Data;
 using MovieManager.DAL.Entities;
 using MovieManager.DAL.Repositories;
 using MovieManager.DAL.Repositories.Interfaces;
+using MovieManager.PL.API.Configurations;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -13,6 +14,10 @@ var builder = WebApplication.CreateBuilder(args);
 // --- Controller + OpenAPI nativo .NET 10 ---
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
+
+// --- Violazioni dei vincoli di database -> 400/409 invece di 500 ---
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<DatabaseExceptionHandler>();
 
 // --- DbContext su SQL Server / LocalDB ---
 builder.Services.AddDbContext<MovieDbContext>(options =>
@@ -48,6 +53,10 @@ using (var scope = app.Services.CreateScope())
 }
 
 // Configure the HTTP request pipeline.
+// Va prima degli endpoint: intercetta le violazioni di vincolo risalite da EF Core
+// e le traduce in 400/409 (vedi DatabaseExceptionHandler).
+app.UseExceptionHandler();
+
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();               // documento OpenAPI: /openapi/v1.json

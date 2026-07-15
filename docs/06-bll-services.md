@@ -103,6 +103,8 @@ public async Task<IReadOnlyList<TModel>> GetAllAsync(CancellationToken cancellat
 
 public async Task<TModel> CreateAsync(TModel model, CancellationToken cancellationToken = default)
 {
+    model.Id = 0;                                    // l'Id lo genera il database (vedi sotto)
+
     var entity = _mapper.Map<TEntity>(model);        // model -> entità
     await _repository.AddAsync(entity, cancellationToken);
     await _unitOfWork.SaveChangesAsync(cancellationToken);   // il salvataggio è QUI
@@ -132,6 +134,33 @@ public async Task<bool> DeleteAsync(int id, CancellationToken cancellationToken 
 ```
 
 Il punto architetturale chiave: **il `SaveChangesAsync` è sempre nel service**, mai nel repository. Il repository prepara la modifica, il service decide l'esito (`true`/`false`) e la Unit of Work conferma con una transazione.
+
+### (?) Perché `CreateAsync` azzera l'Id? (il bug che mi ha fatto perdere un pomeriggio)
+
+Questa riga è nata da un errore vero:
+
+```csharp
+model.Id = 0;
+```
+
+Provando una `POST /api/Actors` da Scalar, con il body di esempio che include `"id"` valorizzato, ottenevo:
+
+```
+Cannot insert explicit value for identity column in table 'Actors'
+when IDENTITY_INSERT is set to OFF.
+```
+
+Cosa succedeva: `Id` è una colonna **IDENTITY** e il valore lo assegna SQL Server. EF Core decide se includere `Id` nell'`INSERT` guardando se è valorizzato: se è `0` capisce "non impostato" e lascia fare al database; se è diverso da zero pensa che io voglia **imporre** quella chiave e genera `INSERT INTO [Actors] ([Id], ...)`. SQL Server lo rifiuta con l'errore **544**.
+
+Il paradosso è che il primo attore era entrato senza problemi: quella volta l'`id` nel body era `0`. Il bug si presentava **solo** con un id diverso da zero, ed era quindi facile da non notare.
+
+Azzerando l'Id in entrata, l'`INSERT` generato torna quello giusto (senza la colonna `Id`) e la chiave la mette il database. È anche la scelta corretta come REST: **su una create, l'id non lo decide il client**. Un id mandato per sbaglio non viene rifiutato, viene semplicemente ignorato.
+
+La riga sta qui, nel service generico, e non in ognuno dei cinque controller: è il vantaggio del `GenericService`, una correzione sola vale per Actors, Directors, Genres, Movies e Reviews insieme. Funziona per tutti perché `TModel : IModelWithId` garantisce a compile-time che `model.Id` esista — la stessa interfaccia del [capitolo 5](05-bll-models.md) che sembrava ridondante.
+
+> `MovieActorService` **non** fa niente del genere, ed è giusto così: la sua chiave `(MovieId, ActorId)` non è generata dal database, la sceglie il client e deve puntare a righe esistenti.
+
+Il dettaglio su IDENTITY e sull'SQL generato prima e dopo è nel [capitolo 10](10-database-sql-server.md).
 
 > **Nota sul disallineamento delle firme.** Nel repository `Update`/`Remove` sono `void`; nel service `UpdateAsync`/`DeleteAsync` ritornano `bool`. Non è un errore: nel repository sono comandi sul change tracker di EF (non sanno se il record "esisteva"), mentre nel service il `bool` è una **regola applicativa** (prima controllo se il record c'è, poi agisco). Sono due livelli con responsabilità diverse.
 
