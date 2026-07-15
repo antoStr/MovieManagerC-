@@ -34,6 +34,10 @@ namespace MovieManager.BLL.Services
 
         public async Task<TModel> CreateAsync(TModel model, CancellationToken cancellationToken = default)
         {
+            // L'Id lo genera il database (colonna identity): un valore arrivato dal client
+            // va scartato, altrimenti EF lo inserirebbe esplicitamente e SQL Server rifiuta.
+            model.Id = 0;
+
             var entity = _mapper.Map<TEntity>(model);
             await _repository.AddAsync(entity, cancellationToken);
             await _unitOfWork.SaveChangesAsync(cancellationToken);

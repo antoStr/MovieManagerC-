@@ -38,11 +38,13 @@ builder.Services.AddAutoMapper(typeof(Program).Assembly);
 
 var app = builder.Build();
 
-// In sviluppo crea il database/schema se non esiste ancora (LocalDB).
+// In sviluppo crea il database/schema se non esiste ancora (LocalDB) e lo popola
+// con i dati di esempio (il seeder è idempotente: non duplica le righe già presenti).
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<MovieDbContext>();
     db.Database.EnsureCreated();
+    await MovieDbSeeder.SeedAsync(db);
 }
 
 // Configure the HTTP request pipeline.
