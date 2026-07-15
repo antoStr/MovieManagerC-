@@ -18,6 +18,110 @@ Il **Model** è quindi una versione "piatta" e pulita dell'entità, pensata per 
 
 ---
 
+## (?) Entity, Model, DTO, ViewModel: quattro parole per lo stesso film
+
+Questa è la sezione che avrei voluto leggere all'inizio. Sono quattro termini che si sentono usare quasi come sinonimi, e non lo sono: **ognuno descrive la stessa cosa sagomata per un posto diverso**. La confusione peggiora guardando il progetto di qualcun altro e trovandoci cartelle che qui non ci sono.
+
+| Termine | È sagomato su… | Dove vive | Nel mio progetto |
+|---------|----------------|-----------|------------------|
+| **Entity** | il **database** | DAL | `Movie` — **18** proprietà |
+| **Model** / **DTO** | il **trasferimento** oltre un confine | BLL | `MovieModel` — **14** proprietà, piatto |
+| **ViewModel** | una **schermata** | PL | **non esiste**, e sotto spiego perché |
+| **View** | non è un oggetto: è un **template HTML** | PL | **non esiste** |
+
+La regola in una riga:
+
+> **L'Entity descrive come il dato è *salvato*. Il DTO descrive come *viaggia*. Il ViewModel descrive come viene *mostrato*.**
+
+Quei due numeri raccontano da soli la differenza. Contati sul codice vero:
+
+| | Proprietà |
+|---|---|
+| `Movie` (entity) | **18** = 14 dati + **4 navigazioni** (`Genre`, `Director`, `MovieActors`, `Reviews`) |
+| `MovieModel` | **14** |
+| Tabella `Movies` nel database | **14 colonne** |
+
+`MovieModel` ha esattamente le colonne della tabella, **e la differenza con l'entità sono precisamente le quattro navigazioni** — cioè i riferimenti ad altri oggetti che, serializzati in JSON, produrrebbero i cicli infiniti del punto 2 qui sopra. La "piattezza" del model, detta in numeri, è tutta lì.
+
+### Model o DTO? (spoiler: sono la stessa cosa, qui)
+
+**DTO** sta per *Data Transfer Object*: un oggetto il cui unico scopo è **portare dati oltre un confine** — tra due livelli, tra server e client — senza logica dentro. È la definizione esatta di `MovieModel`: proprietà e niente altro.
+
+In progetti più grandi i due si separano:
+
+- il **Model** del BLL rappresenta il **dominio** (un film, con le sue regole);
+- il **DTO** è il **contratto pubblico** dell'API (cosa esce da `GET /api/movies`).
+
+Separarli serve quando le due cose divergono: se domani volessi esporre un `MovieListDto` con tre soli campi per una griglia, senza toccare `MovieModel`. Qui coincidono, e la guida dell'esercizio lo dice esplicitamente: *"non si usano DTO separati: il model BLL viene usato direttamente come contratto del servizio"*. Quindi `MovieModel` è **un model che fa anche da DTO**, ed è una scelta consapevole, non un'omissione: con sei entità e un CRUD, un terzo strato di classi sarebbe cerimonia senza guadagno.
+
+> Se un giorno servisse davvero un DTO più magro del model, il posto dove userlo è la proiezione: `ProjectTo<MovieListDto>()` fa arrivare dal database **solo le colonne di quel DTO** invece di caricare tutto e buttare via. È misurato nel [capitolo 12](12-dal-controller-all-sql.md): 17 colonne contro 3.
+
+### E il ViewModel? Il salto è più grande di quanto sembri
+
+Il ViewModel **non è un DTO con un altro nome**. È sagomato su **una schermata**, e la differenza si vede solo con un esempio concreto.
+
+Immagina la pagina **"modifica film"** di un'app che genera HTML. Per disegnarla servono:
+
+- i campi del film → ce li ha già `MovieModel`
+- **la tendina con tutti i generi** tra cui scegliere
+- **la tendina con tutti i registi**
+
+Quelle due liste **non sono dati del film**. Un film non contiene l'elenco di tutti i generi esistenti. Esistono solo perché *quella pagina* ha due `<select>` da riempire. Metterle dentro `MovieModel` significherebbe sporcare il dominio con un dettaglio di grafica: nasce quindi un terzo oggetto, che vive **solo** nel PL e muore con quella schermata.
+
+```csharp
+// Come sarebbe in un progetto che genera HTML — qui NON esiste
+public class MovieEditViewModel
+{
+    public MovieModel Movie { get; set; }              // il dominio
+    public List<SelectListItem> Generi { get; set; }   // roba della schermata
+    public List<SelectListItem> Registi { get; set; }  // roba della schermata
+}
+```
+
+`SelectListItem` dice già tutto: è un tipo di `Microsoft.AspNetCore.Mvc.Rendering`, cioè **una classe che esiste per disegnare un menù a tendina**. Un oggetto del genere non ha niente a che fare con un catalogo di film — ha a che fare con un `<select>`.
+
+### Perché qui non c'è, e perché è giusto così
+
+Il progetto è stato creato con il template **MVC** ([capitolo 1](01-struttura-e-architettura.md)), quindi la domanda è legittima: dov'è finita la "V" di Model-**View**-Controller?
+
+Non c'è perché **non genero HTML**. Le due catene affiancate:
+
+```
+Questo progetto (API):   Entity (DAL) → Model (BLL) → JSON → il client si arrangia
+Un progetto MVC vero:    Entity (DAL) → Model (BLL) → ViewModel (PL) → View (.cshtml) → HTML
+```
+
+Il mio lavoro **finisce al JSON**. Chi consuma l'API — un browser, un'app mobile, Scalar, un altro server — costruisce l'interfaccia che vuole, e non sono affari miei. Un'app MVC invece deve consegnare la pagina **già disegnata**, e per farlo le serve un oggetto sagomato su quella pagina.
+
+**Niente HTML → niente View → niente ViewModel.** Non è un pezzo mancante: è un pezzo che non ha motivo di esistere. Il template MVC ne genera uno solo, `ErrorViewModel` (una classe con dentro un `RequestId`, per la pagina d'errore Razor), e l'ho eliminato insieme alla cartella `Views/`.
+
+> **La "V" è dove stava la JSP.** Nel gestionale dipendenti in Java il servlet preparava i dati e la **JSP** li trasformava in HTML; quello che il servlet infilava con `request.setAttribute(...)` faceva, di fatto, il mestiere del ViewModel. Una View Razor (`.cshtml`) è la stessa identica idea con un'altra sintassi:
+>
+> ```cshtml
+> <h1>@Model.Title</h1>
+> @foreach (var a in Model.Cast) { <li>@a.Nome</li> }
+> ```
+>
+> Qui quel passaggio non esiste: il controller restituisce l'oggetto e ci pensa ASP.NET a serializzarlo. Il [capitolo 11](11-scalar-e-prova-api.md) lo dice in una riga: *"niente JSP, niente form"*.
+
+### ⚠️ Due trappole di vocabolario
+
+**1. "ViewModel" usato al posto di "DTO".** Capita spessissimo di vedere una cartella `ViewModels` in progetti Web API che di View non ne hanno nemmeno una: è un'abitudine ereditata da MVC. Se un progetto ha `ViewModels/` ma nessun `.cshtml`, quelli **sono DTO col nome sbagliato**, e corrispondono ai `Model` di questo progetto. La domanda che scioglie il dubbio è sempre la stessa: *quel progetto genera HTML?* Se no, sono DTO.
+
+**2. "ViewModel" in MVVM è un'altra cosa ancora.** In WPF, MAUI o Avalonia il ViewModel del pattern **MVVM** è un oggetto *vivo*, con data binding e `INotifyPropertyChanged`, che notifica la UI quando cambia. Stessa parola, mondo completamente diverso: lì il ViewModel ha comportamento, qui sarebbe stato solo un contenitore.
+
+### La regola pratica da portarsi via
+
+Quando incontro una classe e non so cosa sia, mi faccio tre domande in fila:
+
+1. **La vede il database?** → è un'**Entity**.
+2. **Attraversa un confine (livello, rete)?** → è un **DTO** (che nel BLL si chiama Model).
+3. **Esiste solo perché una schermata ha bisogno di quella roba?** → è un **ViewModel**.
+
+Se la risposta alla 3 è sì in un progetto che non ha View, c'è qualcosa che non torna.
+
+---
+
 ## 5.1 I Model sono "piatti"
 
 Regola che ho seguito: ogni model contiene i **campi semplici** e le **chiavi esterne** dell'entità corrispondente, ma **non** le proprietà di navigazione né le collezioni. Così evito i cicli del punto 2 e ottengo un JSON prevedibile.

@@ -13,3 +13,9 @@ obj/
 # LocalDB / test artifacts
 *.mdf
 *.ldf
+
+# Materiale dell'esercizio: tracce e guide fornite, non fanno parte del progetto
+GUIDA_CONTROLLER_SCALAR_NET10.md
+Guida-Completa-BLL-MovieManager*
+Istruzioni-*-MovieManager.md
+readmeExample.md

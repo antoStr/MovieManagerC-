@@ -4,6 +4,8 @@ Questo progetto è la ricostruzione, passo per passo, di un gestionale per un **
 
 L'obiettivo non è solo "far funzionare le cose", ma capire **perché** si struttura un progetto in questo modo: separazione in livelli (DAL / BLL / PL), repository, unit of work, servizi generici, mapping automatico e documentazione automatica delle API.
 
+> **Nota sul template.** Il Presentation Layer è nato dal template **App Web ASP.NET Core (Model-View-Controller)**, quello indicato dal docente. L'esercizio però chiede **API REST**, non pagine HTML: la parte "View" del Model-View-Controller resta quindi inutilizzata, e `Views/` e `wwwroot/` sono state eliminate. Perché, cosa comporta e che differenza c'è tra Model, DTO e ViewModel sta nel [capitolo 1](docs/01-struttura-e-architettura.md) e nel [capitolo 5](docs/05-bll-models.md).
+
 > **Nota sulle immagini:** i riferimenti alle immagini (`res/...`) sono segnaposto. Le screenshot le sistemo io più avanti, quindi se vedi qualche immagine "rotta" è normale.
 
 ---

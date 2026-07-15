@@ -92,6 +92,44 @@ app.Run();
 
 ## 9.2 Le registrazioni, spiegate
 
+### `AddControllers()` — e non `AddControllersWithViews()`
+
+```csharp
+builder.Services.AddControllers();
+```
+
+È la prima riga del file ed è anche la più facile da leggere distrattamente. Registra i servizi che servono ai controller: model binding (trasformare il JSON in arrivo in un `MovieModel`), validazione, formatter, routing per attributi.
+
+Merita attenzione perché **è la riga che ho cambiato rispetto al template**. Il progetto nasce da *App Web ASP.NET Core (Model-View-Controller)* ([capitolo 1](01-struttura-e-architettura.md)), che genera:
+
+```csharp
+builder.Services.AddControllersWithViews();   // <- il template
+builder.Services.AddControllers();            // <- il progetto
+```
+
+La differenza è esattamente quella che dice il nome — *WithViews* aggiunge il motore **Razor** — e le conseguenze sono tre:
+
+| | `AddControllersWithViews()` | `AddControllers()` |
+|---|---|---|
+| Il controller può fare | `return View(...)` **e** `return Ok(...)` | solo `return Ok(...)` |
+| Cosa esce | **HTML** o JSON | **JSON** |
+| Cosa carica in memoria | anche il motore Razor | il minimo |
+
+`AddControllersWithViews()` è un **sovrainsieme**: lasciandolo, l'API funzionerebbe identica. L'ho ridotto ad `AddControllers()` perché tenere acceso il motore di rendering per un'app che non renderizza niente è peso morto — e perché la riga dichiara l'intenzione: *questa è un'API, non un sito*.
+
+Stessa storia due righe più in basso, nella pipeline:
+
+```csharp
+app.MapControllerRoute(                          // <- il template: rotte a segmenti
+    pattern: "{controller=Home}/{action=Index}/{id?}");
+
+app.MapControllers();                            // <- il progetto: rotte dagli attributi
+```
+
+`MapControllerRoute` costruisce le rotte per **convenzione** (`/Movies/Edit/3` → `MoviesController.Edit(3)`), che è il modo di ragionare di MVC. `MapControllers()` invece le legge dagli **attributi** — `[Route("api/[controller]")]`, `[HttpGet("{id:int}")]` — che è il modo di ragionare di un'API, dove l'URL è un contratto pubblico e non deve dipendere da come ho chiamato il metodo C# ([capitolo 8](08-plapi-controllers.md)).
+
+> Sono sparite anche `app.UseRouting()` e `app.MapStaticAssets()`: la prima è implicita quando si usa `MapControllers()`, la seconda serviva a servire `wwwroot/`, che non esiste più.
+
 ### Il DbContext e la stringa di connessione
 
 ```csharp
