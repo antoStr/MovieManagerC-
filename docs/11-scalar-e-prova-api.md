@@ -186,7 +186,7 @@ Due cose da sapere in questo giro:
 
 - **L'ordine non è negoziabile.** Un film ha bisogno di un genere e di un regista che esistano già: `genreId` inventato → `400` dal gestore delle eccezioni. Le chiavi esterne impongono la sequenza.
 - **La PUT sostituisce tutto.** I campi che ometto nel body diventano `null`/0, non restano al valore precedente. È la semantica di PUT (sostituzione della risorsa), non un bug. Metodo sicuro: prima una `GET`, copio il JSON della risposta, cambio quello che mi serve e lo rimando indietro intero.
-- **La DELETE cancella a cascata.** Cancellare un film si porta via le sue recensioni e il suo cast; cancellare un *genere* si porta via i film di quel genere e, con loro, recensioni e cast. Vale la pena leggere la sezione 10.12 del [capitolo 10](10-database-sql-server.md) prima di premere Send.
+- **La DELETE cancella a cascata.** Cancellare un film si porta via le sue recensioni e il suo cast; cancellare un *genere* si porta via i film di quel genere e, con loro, recensioni e cast. Vale la pena leggere la sezione 10.13 del [capitolo 10](10-database-sql-server.md) prima di premere Send.
 
 ---
 

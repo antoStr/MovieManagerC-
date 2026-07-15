@@ -428,9 +428,18 @@ Per disfare **tutto**, fino al database vuoto: `dotnet ef database update 0`. Lo
 
 ---
 
-## 13.6 `migrations remove` — ho sbagliato, non l'ho ancora applicata
+## 13.6 `migrations remove` — cancellare una migration sbagliata
 
-Diverso dal rollback: `remove` **cancella il file** dell'ultima migration, se non è stata applicata.
+Serve quando ho creato una migration, mi accorgo di aver sbagliato, e **non l'ho ancora applicata**: a quel punto non c'è niente da disfare nel database, basta buttare via il file e rifarlo.
+
+È la differenza con il rollback della sezione precedente, e conviene fissarla subito perché i due comandi si confondono:
+
+| | Cosa tocca | Cosa lascia intatto |
+|---|---|---|
+| **`database update <precedente>`** (rollback) | il **database**: esegue il `Down()` | il **file** della migration, che resta lì |
+| **`migrations remove`** | il **file**: lo cancella dal progetto | il **database**, che non viene toccato |
+
+Detto in una riga: il rollback disfa l'**effetto**, `remove` cancella l'**istruzione**.
 
 ```powershell
 dotnet ef migrations remove --project MovieManager.DAL --startup-project MovieManager.PL.API
@@ -443,7 +452,7 @@ Done.
 
 Cancella i due file e — importante — **riporta indietro anche lo snapshot**. Modificare a mano una migration già creata quasi sempre è sbagliato: si fa `remove`, si sistema l'entità, si rifà `add`.
 
-La regola che li distingue:
+Messo tutto insieme, ecco quale dei due usare a seconda di quanto è andata lontano la migration:
 
 | Situazione | Comando |
 |---|---|

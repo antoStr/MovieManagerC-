@@ -355,7 +355,7 @@ DECLARE @p int = 3;
 SELECT TOP(@p) ... ORDER BY [m].[DurationMinutes] DESC
 ```
 
-Il `3` non finisce dentro la stringa SQL: diventa `@p`. È lo stesso meccanismo dei parametri visto nella sezione 10.11, quello che rende impossibile la SQL injection — e in più permette a SQL Server di **riusare il piano di esecuzione** per `Take(3)` e `Take(50)`.
+Il `3` non finisce dentro la stringa SQL: diventa `@p`. È lo stesso meccanismo dei parametri visto nella sezione 10.12, quello che rende impossibile la SQL injection — e in più permette a SQL Server di **riusare il piano di esecuzione** per `Take(3)` e `Take(50)`.
 
 ---
 

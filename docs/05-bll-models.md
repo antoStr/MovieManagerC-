@@ -1,4 +1,4 @@
-# 5) BLL — I Model e l'interfaccia IModelWithId
+# 5) BLL — I Model, IModelWithId e la validazione
 
 [⬅ Torna all'indice](../README.md)
 
@@ -182,4 +182,4 @@ Gli stessi attributi finiscono nel documento **OpenAPI** e quindi in **Scalar**:
 - I campi obbligatori hanno `[Required]`, con limiti allineati a quelli del `DbContext`.
 - Una `POST` con body `{}` risponde `400` e non crea niente.
 
-[➡ Prossima parte: BLL — I Service](06-bll-services.md)
+[➡ Prossima parte: BLL — Generic Service, MovieActorService, async/await](06-bll-services.md)

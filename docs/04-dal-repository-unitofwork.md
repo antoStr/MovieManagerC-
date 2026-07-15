@@ -213,4 +213,4 @@ Il DAL è completo. Controllo che compili e, soprattutto, che **nessun repositor
 dotnet build MovieManager.DAL
 ```
 
-[➡ Prossima parte: BLL — I Model e IModelWithId](05-bll-models.md)
+[➡ Prossima parte: BLL — I Model, IModelWithId e la validazione](05-bll-models.md)

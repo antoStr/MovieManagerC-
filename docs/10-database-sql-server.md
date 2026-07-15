@@ -77,59 +77,13 @@ sqllocaldb start MSSQLLocalDB    # avvia l'istanza
 sqllocaldb stop MSSQLLocalDB     # ferma l'istanza
 ```
 
----
+### Le stringhe di connessione, scenario per scenario
 
-## 10.1b Passare a SQL Server "vero" (Express o Developer)
-
-LocalDB basta per l'esercizio, ma vale la pena sapere **cosa cambierebbe** passando a un SQL Server con il servizio — perché è la situazione normale fuori da un esercizio, ed è quella in cui una macchina di sviluppo somiglia a un server vero.
-
-### 1) Installare il motore
-
-```powershell
-winget install Microsoft.SQLServer.2022.Express      # gratuita, va bene anche in produzione
-# oppure
-winget install Microsoft.SQLServer.2022.Developer    # completa, ma solo per sviluppo/test
-```
-
-> ⚠️ **Serve un terminale come amministratore**: SQL Server installa un servizio di Windows e senza elevazione l'installer si ferma subito.
-
-Durante l'installazione la scelta che conta è la **modalità di autenticazione**:
-
-- **Windows Authentication** — solo account Windows. Più sicura, è il default.
-- **Modalità mista (SQL Server and Windows Authentication)** — abilita anche i **login SQL** (utente + password), e chiede la password dell'utente `sa`. Serve se l'applicazione dovrà collegarsi con credenziali proprie, il caso normale quando l'app gira su una macchina diversa dal database.
-
-Verifica che sia in piedi:
-
-```powershell
-Get-Service | Where-Object Name -like "MSSQL*" | Select-Object Name, Status
-sqlcmd -S ".\SQLEXPRESS" -Q "SELECT @@VERSION;"
-```
-
-### 2) Installare SSMS (SQL Server Management Studio)
-
-È l'interfaccia grafica completa per SQL Server: esplorare tabelle, scrivere query, vedere i piani di esecuzione, gestire backup e permessi. È molto più potente del `SQL Server Object Explorer` di Visual Studio.
-
-```powershell
-winget install Microsoft.SQLServerManagementStudio
-```
-
-Al primo avvio chiede a cosa collegarsi:
-
-| Campo | Cosa mettere |
-|-------|--------------|
-| **Server name** | `.\SQLEXPRESS` (o `localhost\SQLEXPRESS`). Per LocalDB: `(localdb)\MSSQLLocalDB` |
-| **Authentication** | `Windows Authentication` |
-| **Trust server certificate** | da spuntare in locale |
-
-> **SSMS funziona anche con LocalDB.** Non serve installare SQL Server per usarlo: basta mettere `(localdb)\MSSQLLocalDB` come server name e si vede `MovieManagerDb` con tutte le sue tabelle, senza cambiare niente al progetto.
-
-### 3) Cambiare la stringa di connessione
-
-È **l'unica modifica al progetto**, ed è una riga di `appsettings.json`. Il codice C# non cambia: `Program.cs` legge la stringa dalla configurazione e `UseSqlServer` parla con qualunque edizione ([capitolo 9](09-plapi-program-di-scalar.md)).
+Cambiare motore è **una riga** di `appsettings.json`, e il codice C# non cambia mai: `Program.cs` legge la stringa dalla configurazione e `UseSqlServer` parla con qualunque edizione ([capitolo 9](09-plapi-program-di-scalar.md)).
 
 | Scenario | Stringa di connessione |
 |----------|------------------------|
-| **LocalDB** (attuale) | `Server=(localdb)\MSSQLLocalDB;Database=MovieManagerDb;Trusted_Connection=True;TrustServerCertificate=True` |
+| **LocalDB** (quella attuale) | `Server=(localdb)\MSSQLLocalDB;Database=MovieManagerDb;Trusted_Connection=True;TrustServerCertificate=True` |
 | **Express in locale**, auth Windows | `Server=.\SQLEXPRESS;Database=MovieManagerDb;Trusted_Connection=True;TrustServerCertificate=True` |
 | **Istanza predefinita** in locale | `Server=localhost;Database=MovieManagerDb;Trusted_Connection=True;TrustServerCertificate=True` |
 | **Login SQL** (utente + password) | `Server=localhost;Database=MovieManagerDb;User Id=movieapp;Password=***;TrustServerCertificate=True` |
@@ -137,28 +91,9 @@ Al primo avvio chiede a cosa collegarsi:
 
 Il `.\` di `.\SQLEXPRESS` significa "questa macchina": `.` è l'abbreviazione di `localhost`, `SQLEXPRESS` è il nome dell'istanza. Un'**istanza predefinita** (senza nome) si indica con il solo `localhost`.
 
-Poi basta riavviare: `EnsureCreated()` crea il database sulla nuova istanza e il seeder lo ripopola. Nessun'altra riga da toccare — è esattamente il vantaggio dell'architettura a strati del [capitolo 1](01-struttura-e-architettura.md).
+Cambiata la stringa basta riavviare: `EnsureCreated()` crea il database sulla nuova istanza e il seeder lo ripopola. Nessun'altra riga da toccare — è il vantaggio concreto dell'architettura a strati del [capitolo 1](01-struttura-e-architettura.md).
 
-### 4) Creare un login SQL dedicato
-
-Con l'autenticazione Windows non serve; con la modalità mista, la buona pratica è **non** usare mai `sa` per l'applicazione, ma creare un utente con i soli permessi che gli servono:
-
-```sql
--- login a livello di server
-CREATE LOGIN movieapp WITH PASSWORD = 'UnaPasswordSolida!123';
-
--- utente dentro il database
-USE MovieManagerDb;
-CREATE USER movieapp FOR LOGIN movieapp;
-
--- solo lettura e scrittura sui dati: niente DDL, niente permessi amministrativi
-ALTER ROLE db_datareader ADD MEMBER movieapp;
-ALTER ROLE db_datawriter ADD MEMBER movieapp;
-```
-
-> ⚠️ **Le password non vanno in `appsettings.json`**, che finisce su Git. In sviluppo si usano gli **User Secrets** (`dotnet user-secrets set "ConnectionStrings:DefaultConnection" "..."`, che salvano fuori dalla cartella del progetto); in produzione, variabili d'ambiente o un gestore di segreti. Con `Trusted_Connection=True` il problema non esiste: nella stringa non c'è nessun segreto, ed è un motivo in più per preferire l'autenticazione Windows quando è possibile.
->
-> Nota che questi permessi (`db_datareader` + `db_datawriter`) **non** bastano per `EnsureCreated()` né per le migration, che devono creare tabelle. È il motivo per cui in produzione lo schema si applica **prima** del deploy, con un account diverso da quello dell'applicazione ([capitolo 13](13-migrations.md)).
+> 📖 **Installare SQL Server, usare SSMS, creare login e permessi, leggere un piano di esecuzione, fare backup**: tutto questo sta nel [capitolo 14](14-sql-server-e-ssms.md), dedicato a come si lavora su SQL Server fuori da un esercizio. Qui il tema è **l'SQL**; là è **lo strumento**.
 
 ---
 
@@ -695,7 +630,7 @@ DELETE FROM Genres WHERE Name = 'Documentario';
 
 ---
 
-## 10.10b Le query con `INTO`: copiare righe e creare tabelle al volo
+## 10.11 Le query con `INTO`: copiare righe e creare tabelle al volo
 
 Ci sono due istruzioni con `INTO` e si somigliano nel nome, ma fanno cose opposte. La differenza sta tutta in **chi crea la tabella di destinazione**.
 
@@ -835,13 +770,13 @@ ROLLBACK;
 SELECT Title, DurationMinutes FROM Movies WHERE Id = 1;       -- torna 155
 ```
 
-`COMMIT` conferma, `ROLLBACK` annulla. Questo è anche il modo **sicuro di provare una query distruttiva**: la eseguo dentro una transazione, guardo l'effetto, e annullo. L'ho usato per misurare davvero cosa si porta via un `DELETE` a cascata (sezione 10.12).
+`COMMIT` conferma, `ROLLBACK` annulla. Questo è anche il modo **sicuro di provare una query distruttiva**: la eseguo dentro una transazione, guardo l'effetto, e annullo. L'ho usato per misurare davvero cosa si porta via un `DELETE` a cascata (sezione 10.13).
 
 E qui si chiude il cerchio con il [capitolo 4](04-dal-repository-unitofwork.md): **`SaveChangesAsync()` di EF Core è già una transazione**. Tutte le modifiche accumulate nel change tracker vengono inviate in blocco e, se una fallisce, viene annullato tutto. È esattamente il motivo per cui la Unit of Work esiste e per cui il `SaveChanges` sta nel service e non nel repository: è il punto in cui decido *dove finisce la transazione*.
 
 ---
 
-## 10.11 Come EF Core traduce: da LINQ a SQL
+## 10.12 Come EF Core traduce: da LINQ a SQL
 
 Il vantaggio di sapere l'SQL è capire cosa combina l'ORM. Con la configurazione di log di questo progetto, **EF stampa in console ogni query che esegue**. Avviando l'app si vede scorrere l'SQL vero.
 
@@ -882,7 +817,7 @@ Le parentesi quadre `[...]` sono la delimitazione dei nomi in T-SQL: servono qua
 
 ---
 
-## 10.12 I vincoli: cosa il database rifiuta (e cosa cancella)
+## 10.13 I vincoli: cosa il database rifiuta (e cosa cancella)
 
 Il database non è un sacco dove buttare dati: fa rispettare le regole a prescindere da chi scrive (l'API, `sqlcmd`, chiunque). Per vederli tutti:
 
@@ -930,7 +865,7 @@ Nasce dal `HasCheckConstraint` del [capitolo 3](03-dal-dbcontext.md) ed è appli
 
 ---
 
-## 10.13 Come nascono i dati: EnsureCreated e il seeder
+## 10.14 Come nascono i dati: EnsureCreated e il seeder
 
 All'avvio, `Program.cs` fa due cose in sequenza ([capitolo 9](09-plapi-program-di-scalar.md)):
 
