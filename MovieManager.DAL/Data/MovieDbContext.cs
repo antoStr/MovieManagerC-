@@ -38,6 +38,14 @@ namespace MovieManager.DAL.Data
             modelBuilder.Entity<Movie>()
                 .Property(m => m.Title).IsRequired().HasMaxLength(200);
 
+            // Precisione esplicita sugli importi: senza, EF sceglie decimal(18,2) da sé
+            // e avvisa che i valori fuori scala verrebbero troncati in silenzio.
+            // Lo schema non cambia: stessa precisione, ma dichiarata.
+            modelBuilder.Entity<Movie>()
+                .Property(m => m.Budget).HasPrecision(18, 2);
+            modelBuilder.Entity<Movie>()
+                .Property(m => m.Revenue).HasPrecision(18, 2);
+
             modelBuilder.Entity<Genre>()
                 .Property(g => g.Name).IsRequired().HasMaxLength(100);
 

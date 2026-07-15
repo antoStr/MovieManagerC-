@@ -80,6 +80,13 @@ protected override void OnModelCreating(ModelBuilder modelBuilder)
     // Lunghezza e obbligatorietà sui campi principali
     modelBuilder.Entity<Movie>()
         .Property(m => m.Title).IsRequired().HasMaxLength(200);
+
+    // Precisione esplicita sugli importi (vedi sotto)
+    modelBuilder.Entity<Movie>()
+        .Property(m => m.Budget).HasPrecision(18, 2);
+    modelBuilder.Entity<Movie>()
+        .Property(m => m.Revenue).HasPrecision(18, 2);
+
     modelBuilder.Entity<Genre>()
         .Property(g => g.Name).IsRequired().HasMaxLength(100);
     modelBuilder.Entity<Director>()
@@ -119,6 +126,25 @@ Con `new { ... }` creo un tipo anonimo che rappresenta la coppia di colonne: è 
 
 Sono i vincoli sui campi principali: `IsRequired()` genera una colonna `NOT NULL`, `HasMaxLength(200)` genera un `nvarchar(200)` invece di un `nvarchar(max)`. È lo stesso ragionamento dei `not null` e `varchar(50)` che mettevo a mano nella `CREATE TABLE` del gestionale Java — solo che qui lo dichiaro in C# e ci pensa EF a generare il DDL.
 
+### `HasPrecision()` sugli importi (aggiunto dopo)
+
+```csharp
+.Property(m => m.Budget).HasPrecision(18, 2);
+```
+
+Queste due righe all'inizio non c'erano, e sono nate da un avviso che ho scoperto solo generando una migration di prova ([capitolo 13](13-migrations.md)):
+
+```
+No store type was specified for the decimal property 'Budget' on entity type 'Movie'.
+This will cause values to be silently truncated...
+```
+
+Senza istruzioni, EF sceglie da solo `decimal(18,2)` per ogni `decimal`. La scelta è ragionevole per degli importi, ma è **sua**, non mia, e le conseguenze sono silenziose: scrivendo `123.456789` il database salva `123.46` senza dire niente. `EnsureCreated()` fa esattamente la stessa cosa dell'avviso, ma non avvisa — per questo il problema era lì dal primo giorno senza che me ne accorgessi.
+
+`HasPrecision(18, 2)` **non cambia lo schema**: la colonna resta `decimal(18,2)`, identica. Cambia chi ha deciso — ora è scritto nel codice invece di essere un default nascosto. È la stessa logica di `HasMaxLength`: meglio dichiarare che lasciare indovinare.
+
+> Il seguito interessante è che l'arrotondamento **continua ad avvenire** (deve: la colonna ha due decimali), e questo ha una conseguenza sulla risposta di una `POST` che non è affatto ovvia — è la trappola in fondo al [capitolo 12](12-dal-controller-all-sql.md).
+
 ### Il check constraint sul punteggio
 
 ```csharp
@@ -141,6 +167,8 @@ Il database fisico va creato da qualche parte. Ci sono due approcci:
 - **`EnsureCreated()`** — Al primo avvio EF guarda il modello e, se il database non esiste, lo crea di sana pianta con tutte le tabelle e i vincoli. Semplice e perfetto per un esercizio in locale.
 
 In questo progetto uso `EnsureCreated()` nel `Program.cs`. Il rovescio della medaglia: `EnsureCreated` **non** aggiorna uno schema già esistente. Quindi se in futuro modifico un'entità, per rivedere la modifica devo eliminare il database `MovieManagerDb` e riavviare (verrà ricreato), oppure passare alle migrations.
+
+> 📖 Le migration hanno un capitolo tutto loro, il [13](13-migrations.md): cosa sono, tutti i comandi, e soprattutto **cosa costerebbe convertire questo progetto** (spoiler: c'è un intoppo che nasce proprio dall'aver messo il `DbContext` nel DAL e il provider nel PL).
 
 Subito dopo `EnsureCreated()` gira `MovieDbSeeder` (`Data/MovieDbSeeder.cs`), che riempie il catalogo di dati di esempio. Lo schema e i dati nascono così in due passaggi distinti: struttura prima, contenuto poi. Il dettaglio di come lo fa senza mai duplicare niente è nel [capitolo 10](10-database-sql-server.md).
 

@@ -213,4 +213,4 @@ Tutti i comandi pronti per Scalar, PowerShell e sqlcmd stanno in [`COMANDI.txt`]
 - Una POST con body `{}` risponde `400` con i messaggi per campo.
 - Una POST valida risponde `201` con l'`id` assegnato dal database.
 
-[⬅ Torna all'indice](../README.md)
+[➡ Prossima parte: Dal Controller all'SQL — il flusso completo e i metodi `To*`](12-dal-controller-all-sql.md)

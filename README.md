@@ -29,7 +29,10 @@ L'obiettivo non è solo "far funzionare le cose", ma capire **perché** si strut
 - **Approfondimenti pratici** — non "come l'ho costruito" ma "come si usa e cosa c'è sotto":
   10. [Il database — SQL Server, schema e SQL dalle basi alle join](docs/10-database-sql-server.md)
   11. [Scalar — provare le API dal browser](docs/11-scalar-e-prova-api.md)
-- [`COMANDI.txt`](COMANDI.txt) — tutti i comandi CRUD pronti all'uso (Scalar, PowerShell, sqlcmd)
+  12. [Dal Controller all'SQL — il flusso completo e i metodi `To*`](docs/12-dal-controller-all-sql.md)
+  13. [Le migration — versionare lo schema del database](docs/13-migrations.md)
+  14. [SQL Server e SSMS — usare il database come al lavoro](docs/14-sql-server-e-ssms.md)
+- [`COMANDI.txt`](COMANDI.txt) — tutti i comandi CRUD pronti all'uso (Scalar, PowerShell, sqlcmd, `dotnet ef`)
 
 ---
 
@@ -74,6 +77,21 @@ Client (Scalar / browser / Postman)
         ▼
 [ DAL ] Repository  ──►  MovieDbContext (EF Core)  ──►  SQL Server LocalDB
 ```
+
+Concretamente, una `GET /api/movies/3` tocca **sei file** in fila, e a ogni passaggio il dato cambia forma:
+
+| Passo | File | Il film è… |
+|-------|------|------------|
+| 1 | `Controllers/MoviesController.cs` | una richiesta HTTP |
+| 2 | `Services/GenericService.cs` | un `MovieModel` (BLL) |
+| 3 | `Repositories/GenericRepository.cs` | un `Movie` (entità DAL) |
+| 4 | EF Core → `Data/MovieDbContext.cs` | una `SELECT` |
+| 5 | SQL Server | una riga della tabella `Movies` |
+| ↩ | e al ritorno la strada inversa | JSON |
+
+Ogni livello parla **solo** con quello sotto: il controller non sa che esiste un database, il DAL non sa che esiste l'HTTP. Le tre rappresentazioni dello stesso film (JSON, model, entità) non sono una complicazione inutile — sono il motivo per cui si può cambiare un pezzo senza toccare gli altri.
+
+📖 **Il flusso passo per passo, con l'SQL vero che ne esce, è nel [capitolo 12](docs/12-dal-controller-all-sql.md).** Il viaggio visto dal lato `async`/`await` — cosa fa il thread mentre il database risponde — è nel [capitolo 6](docs/06-bll-services.md).
 
 ![Flow dell'esercizio](res/flow.png)
 
@@ -120,7 +138,7 @@ Il DBMS è **SQL Server**, nell'edizione **LocalDB** (quella leggera che si inst
 | **Istanza** | `(localdb)\MSSQLLocalDB` |
 | **Database** | `MovieManagerDb` |
 | **Autenticazione** | Windows (`Trusted_Connection=True`) — niente utente e password |
-| **Schema** | generato da EF Core con `EnsureCreated()`, senza migration |
+| **Schema** | generato da EF Core con `EnsureCreated()`, senza migration ([perché, e cosa costerebbe cambiare](docs/13-migrations.md)) |
 | **Dati** | inseriti da `MovieDbSeeder` a ogni avvio, in modo idempotente |
 | **Tabelle** | `Genres`, `Directors`, `Actors`, `Movies`, `MovieActors`, `Reviews` |
 
@@ -138,7 +156,16 @@ Per guardare dentro il database senza passare dall'applicazione:
 sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -Q "SELECT Id, Title FROM Movies;" -W
 ```
 
-📖 **Tutto il resto — schema completo, come EF traduce le classi in tabelle, SQL dalle basi alle join, subquery e window function, transazioni, vincoli e seeder — sta nel [capitolo 10](docs/10-database-sql-server.md).** I comandi pronti da copiare sono in [`COMANDI.txt`](COMANDI.txt).
+📖 Il resto sta in tre capitoli, secondo cosa serve:
+
+| Domanda | Capitolo |
+|---------|----------|
+| Com'è fatto lo schema? Come si scrive SQL, dalle `SELECT` alle join, subquery, window function, `SELECT INTO`, transazioni e vincoli? E cos'è SQL Server come servizio, rispetto a LocalDB? | [10 — Il database](docs/10-database-sql-server.md) |
+| Cosa succede tra la richiesta HTTP e la riga di SQL Server? Quando parte davvero una query e chi la fa partire (`ToListAsync`, `ToDictionaryAsync`, `ProjectTo`…)? | [12 — Dal Controller all'SQL](docs/12-dal-controller-all-sql.md) |
+| Come si cambia lo schema **senza perdere i dati**? Cosa sono le migration e quali sono i comandi? | [13 — Le migration](docs/13-migrations.md) |
+| Come si usa **SSMS**? Piani di esecuzione, backup, permessi — cioè come si lavora su SQL Server fuori da un esercizio | [14 — SQL Server e SSMS](docs/14-sql-server-e-ssms.md) |
+
+I comandi pronti da copiare sono in [`COMANDI.txt`](COMANDI.txt).
 
 ---
 

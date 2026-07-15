@@ -16,17 +16,42 @@ Un **DBMS** (Database Management System) è il programma che custodisce i dati e
 
 Il suo dialetto SQL si chiama **T-SQL** (Transact-SQL): è SQL standard più estensioni Microsoft. Quasi tutto quello che scrivo qui è SQL standard e funzionerebbe anche altrove; dove uso qualcosa di specifico di T-SQL (`TOP`, `GETDATE()`, `IDENTITY`) lo segnalo.
 
+## (?) Che cosa è un'istanza? E un servizio?
+
+Prima delle edizioni serve questo, perché è il concetto che regge tutta la sezione.
+
+Un'**istanza** di SQL Server è **una copia in esecuzione del motore**, con i suoi database, i suoi utenti e la sua configurazione. Su una macchina possono convivere più istanze indipendenti (una per SQL Server 2019, una per il 2022…), e ognuna si raggiunge con un nome diverso. Per questo la stringa di connessione dice sempre *quale* istanza, non solo *quale* macchina.
+
+Nelle edizioni "vere", un'istanza è un **servizio di Windows**: un processo che parte all'avvio del computer e resta acceso, in attesa di connessioni, anche quando nessuno lo sta usando. Si vede nel Gestione servizi con un nome come `MSSQL$SQLEXPRESS`, e si controlla come qualsiasi servizio:
+
+```powershell
+Get-Service | Where-Object Name -like "MSSQL*"     # c'è? sta girando?
+Start-Service "MSSQL`$SQLEXPRESS"                  # avvia (backtick: $ va protetto in PowerShell)
+Stop-Service  "MSSQL`$SQLEXPRESS"                  # ferma
+```
+
+**LocalDB rompe proprio questa regola**, ed è tutta la sua ragione d'essere.
+
 ## (?) Che cosa è LocalDB? Perché non "SQL Server" e basta?
 
-SQL Server esiste in più edizioni. Questo progetto usa **LocalDB**, e la differenza conta:
+| Edizione | Cos'è | Servizio sempre attivo? | Quando si usa |
+|----------|-------|--------------------------|---------------|
+| **LocalDB** | Motore minimo che gira **su richiesta**, come processo del mio utente | **No**: parte da solo alla prima connessione e si spegne dopo ~5 min di inattività | sviluppo locale, esercizi |
+| **Express** | Gratuita, completa, come servizio di Windows. Limiti: 10 GB per database, 1 GB di RAM, 4 core | Sì | piccole applicazioni, anche in produzione |
+| **Developer** | **Identica a Enterprise**, gratuita, ma la licenza vieta la produzione | Sì | sviluppo e test seri |
+| **Standard / Enterprise** | Complete, a pagamento | Sì | produzione |
 
-| Edizione | Cos'è | Quando si usa |
-|----------|-------|---------------|
-| **LocalDB** | Versione minima che gira **su richiesta** come processo dell'utente, senza servizio sempre attivo | sviluppo locale, esercizi |
-| **Express** | Gratuita, gira come servizio di Windows, con limiti (10 GB per database) | piccole applicazioni |
-| **Developer / Standard / Enterprise** | Complete, come servizio su un server | test seri e produzione |
+Le differenze che contano davvero, e che si sentono passando dall'una all'altra:
 
-LocalDB si installa insieme a Visual Studio e non chiede configurazione: la prima volta che qualcuno si collega, l'istanza si avvia da sola. È perfetta per un esercizio e inadatta alla produzione (nessuno si collega da un'altra macchina).
+| | LocalDB | Express / Developer / Standard |
+|---|---|---|
+| Si collega da un'altra macchina? | **Mai** | Sì (aprendo la porta 1433) |
+| Utenti | solo il proprietario | utenti e permessi veri |
+| Login SQL (utente + password) | non ha senso | supportati |
+| Backup automatici, SQL Agent | no | sì (tranne Express per l'Agent) |
+| Va bene in produzione? | **No** | Sì |
+
+**Questo progetto usa LocalDB**, ed è la scelta giusta per un esercizio: si installa con Visual Studio, non chiede configurazione, e la prima volta che qualcuno si collega l'istanza si avvia da sola. È inadatta alla produzione per un motivo solo ma insormontabile: **nessuno può collegarsi dall'esterno**. Non è un server, è un motore di database prestato a un'applicazione desktop.
 
 L'istanza si chiama `MSSQLLocalDB` e la ritrovo nella stringa di connessione in `appsettings.json`:
 
@@ -43,14 +68,97 @@ Pezzo per pezzo:
 | `Trusted_Connection=True` | autenticazione **Windows**: uso il mio account, niente utente e password nella stringa |
 | `TrustServerCertificate=True` | accetta il certificato autofirmato di LocalDB (accettabile in locale, **da non** portare in produzione) |
 
-Comandi utili sull'istanza:
+Comandi utili, che valgono **solo** per LocalDB (`sqllocaldb` non esiste per le altre edizioni: lì si usano i servizi di Windows):
 
 ```powershell
-sqllocaldb info                  # elenca le istanze presenti
+sqllocaldb info                  # elenca le istanze presenti  -> MSSQLLocalDB
 sqllocaldb info MSSQLLocalDB     # stato e versione dell'istanza
 sqllocaldb start MSSQLLocalDB    # avvia l'istanza
 sqllocaldb stop MSSQLLocalDB     # ferma l'istanza
 ```
+
+---
+
+## 10.1b Passare a SQL Server "vero" (Express o Developer)
+
+LocalDB basta per l'esercizio, ma vale la pena sapere **cosa cambierebbe** passando a un SQL Server con il servizio — perché è la situazione normale fuori da un esercizio, ed è quella in cui una macchina di sviluppo somiglia a un server vero.
+
+### 1) Installare il motore
+
+```powershell
+winget install Microsoft.SQLServer.2022.Express      # gratuita, va bene anche in produzione
+# oppure
+winget install Microsoft.SQLServer.2022.Developer    # completa, ma solo per sviluppo/test
+```
+
+> ⚠️ **Serve un terminale come amministratore**: SQL Server installa un servizio di Windows e senza elevazione l'installer si ferma subito.
+
+Durante l'installazione la scelta che conta è la **modalità di autenticazione**:
+
+- **Windows Authentication** — solo account Windows. Più sicura, è il default.
+- **Modalità mista (SQL Server and Windows Authentication)** — abilita anche i **login SQL** (utente + password), e chiede la password dell'utente `sa`. Serve se l'applicazione dovrà collegarsi con credenziali proprie, il caso normale quando l'app gira su una macchina diversa dal database.
+
+Verifica che sia in piedi:
+
+```powershell
+Get-Service | Where-Object Name -like "MSSQL*" | Select-Object Name, Status
+sqlcmd -S ".\SQLEXPRESS" -Q "SELECT @@VERSION;"
+```
+
+### 2) Installare SSMS (SQL Server Management Studio)
+
+È l'interfaccia grafica completa per SQL Server: esplorare tabelle, scrivere query, vedere i piani di esecuzione, gestire backup e permessi. È molto più potente del `SQL Server Object Explorer` di Visual Studio.
+
+```powershell
+winget install Microsoft.SQLServerManagementStudio
+```
+
+Al primo avvio chiede a cosa collegarsi:
+
+| Campo | Cosa mettere |
+|-------|--------------|
+| **Server name** | `.\SQLEXPRESS` (o `localhost\SQLEXPRESS`). Per LocalDB: `(localdb)\MSSQLLocalDB` |
+| **Authentication** | `Windows Authentication` |
+| **Trust server certificate** | da spuntare in locale |
+
+> **SSMS funziona anche con LocalDB.** Non serve installare SQL Server per usarlo: basta mettere `(localdb)\MSSQLLocalDB` come server name e si vede `MovieManagerDb` con tutte le sue tabelle, senza cambiare niente al progetto.
+
+### 3) Cambiare la stringa di connessione
+
+È **l'unica modifica al progetto**, ed è una riga di `appsettings.json`. Il codice C# non cambia: `Program.cs` legge la stringa dalla configurazione e `UseSqlServer` parla con qualunque edizione ([capitolo 9](09-plapi-program-di-scalar.md)).
+
+| Scenario | Stringa di connessione |
+|----------|------------------------|
+| **LocalDB** (attuale) | `Server=(localdb)\MSSQLLocalDB;Database=MovieManagerDb;Trusted_Connection=True;TrustServerCertificate=True` |
+| **Express in locale**, auth Windows | `Server=.\SQLEXPRESS;Database=MovieManagerDb;Trusted_Connection=True;TrustServerCertificate=True` |
+| **Istanza predefinita** in locale | `Server=localhost;Database=MovieManagerDb;Trusted_Connection=True;TrustServerCertificate=True` |
+| **Login SQL** (utente + password) | `Server=localhost;Database=MovieManagerDb;User Id=movieapp;Password=***;TrustServerCertificate=True` |
+| **Server remoto**, porta esplicita | `Server=192.168.1.50,1433;Database=MovieManagerDb;User Id=movieapp;Password=***;Encrypt=True` |
+
+Il `.\` di `.\SQLEXPRESS` significa "questa macchina": `.` è l'abbreviazione di `localhost`, `SQLEXPRESS` è il nome dell'istanza. Un'**istanza predefinita** (senza nome) si indica con il solo `localhost`.
+
+Poi basta riavviare: `EnsureCreated()` crea il database sulla nuova istanza e il seeder lo ripopola. Nessun'altra riga da toccare — è esattamente il vantaggio dell'architettura a strati del [capitolo 1](01-struttura-e-architettura.md).
+
+### 4) Creare un login SQL dedicato
+
+Con l'autenticazione Windows non serve; con la modalità mista, la buona pratica è **non** usare mai `sa` per l'applicazione, ma creare un utente con i soli permessi che gli servono:
+
+```sql
+-- login a livello di server
+CREATE LOGIN movieapp WITH PASSWORD = 'UnaPasswordSolida!123';
+
+-- utente dentro il database
+USE MovieManagerDb;
+CREATE USER movieapp FOR LOGIN movieapp;
+
+-- solo lettura e scrittura sui dati: niente DDL, niente permessi amministrativi
+ALTER ROLE db_datareader ADD MEMBER movieapp;
+ALTER ROLE db_datawriter ADD MEMBER movieapp;
+```
+
+> ⚠️ **Le password non vanno in `appsettings.json`**, che finisce su Git. In sviluppo si usano gli **User Secrets** (`dotnet user-secrets set "ConnectionStrings:DefaultConnection" "..."`, che salvano fuori dalla cartella del progetto); in produzione, variabili d'ambiente o un gestore di segreti. Con `Trusted_Connection=True` il problema non esiste: nella stringa non c'è nessun segreto, ed è un motivo in più per preferire l'autenticazione Windows quando è possibile.
+>
+> Nota che questi permessi (`db_datareader` + `db_datawriter`) **non** bastano per `EnsureCreated()` né per le migration, che devono creare tabelle. È il motivo per cui in produzione lo schema si applica **prima** del deploy, con un account diverso da quello dell'applicazione ([capitolo 13](13-migrations.md)).
 
 ---
 
@@ -91,7 +199,7 @@ Questo è il punto in cui i due mondi si toccano. Io ho scritto classi C#; `Ensu
 | `string? Country` (nullable) | `nvarchar(max) NULL` | il `?` la rende nullable; senza `HasMaxLength` diventa `max` |
 | `DateOnly? BirthDate` | `date NULL` | `DateOnly` → `date` (solo giorno, niente ora) |
 | `DateTime CreatedAt` | `datetime2 NOT NULL` | `DateTime` → `datetime2` |
-| `decimal? Budget` | `decimal(18,2) NULL` | precisione predefinita di EF per `decimal` |
+| `decimal? Budget` | `decimal(18,2) NULL` | dal mio `HasPrecision(18, 2)` — prima era la precisione **predefinita** di EF, con il rischio di troncamenti silenziosi ([cap. 3](03-dal-dbcontext.md)) |
 | `bool IsLeadRole` | `bit NOT NULL` | in SQL Server il booleano è `bit` (0/1) |
 | `int GenreId` + `Genre Genre` | `int NOT NULL` + **FOREIGN KEY** | la coppia "id + proprietà di navigazione" diventa una chiave esterna |
 | `ICollection<MovieActor> MovieActors` | **niente colonna** | il lato "molti" vive nell'altra tabella, non qui |
@@ -587,6 +695,134 @@ DELETE FROM Genres WHERE Name = 'Documentario';
 
 ---
 
+## 10.10b Le query con `INTO`: copiare righe e creare tabelle al volo
+
+Ci sono due istruzioni con `INTO` e si somigliano nel nome, ma fanno cose opposte. La differenza sta tutta in **chi crea la tabella di destinazione**.
+
+| | `SELECT ... INTO nuova` | `INSERT INTO esistente ... SELECT` |
+|---|---|---|
+| La tabella di destinazione | la **crea** l'istruzione | deve **già esistere** |
+| Se esiste già | **errore** | ci aggiunge le righe |
+| Le colonne | le deduce dalla `SELECT` | le indico io |
+| Serve per | fotografie, tabelle di lavoro | copiare righe tra tabelle vere |
+
+### `SELECT ... INTO` — crea la tabella e la riempie
+
+```sql
+SELECT Title, DurationMinutes, ReleaseDate
+INTO MoviesLunghi
+FROM Movies
+WHERE DurationMinutes > 150;
+```
+
+In un colpo solo: `MoviesLunghi` **non esisteva**, ora esiste e contiene 3 righe.
+
+```
+Title              DurationMinutes  ReleaseDate
+-----------------  ---------------  -----------
+Dune               155              2021-10-22
+Blade Runner 2049  164              2017-10-05
+Oppenheimer        180              2023-07-21
+```
+
+I **tipi delle colonne** vengono ereditati dalla `SELECT`, senza doverli dichiarare:
+
+```sql
+SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
+FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'MoviesLunghi';
+```
+```
+COLUMN_NAME      DATA_TYPE  IS_NULLABLE
+---------------  ---------  -----------
+Title            nvarchar   NO
+DurationMinutes  int        NO
+ReleaseDate      date       NO
+```
+
+È comodissimo per **farsi una fotografia prima di combinare qualcosa**:
+
+```sql
+SELECT * INTO Movies_Backup_20260715 FROM Movies;   -- copia di sicurezza in una riga
+-- ... esperimenti ...
+DROP TABLE Movies_Backup_20260715;                  -- fatto, la butto
+```
+
+Nota che il nome della tabella **non può essere una variabile**: `SELECT ... INTO @nome` non esiste. Il nome si scrive lì, letterale.
+
+### ⚠️ Cosa `SELECT INTO` **non** copia (la parte che si sbaglia)
+
+Copia **struttura e dati**, e basta. Ho verificato ogni voce sul database del progetto:
+
+| Cosa | Copiata? |
+|------|----------|
+| Colonne, tipi, nullabilità | **Sì** |
+| Righe | **Sì** |
+| `IDENTITY` | **Sì** ← l'unica sorpresa |
+| Chiave primaria | No |
+| Foreign key | No |
+| **Check constraint** | **No** |
+| Indici | No |
+
+La riga da tenere a mente è il **check constraint**. La copia di `Reviews` accetta felicemente un punteggio che la tabella vera rifiuta:
+
+```sql
+SELECT * INTO ReviewsCopia FROM Reviews;
+
+-- sulla COPIA: passa
+INSERT INTO ReviewsCopia (MovieId, ReviewerName, Score, Comment, CreatedAt)
+VALUES (1, 'Test', 99, 'fuori range 1-10', GETDATE());
+-- -> inserito, Score = 99
+
+-- sulla tabella VERA: respinto
+INSERT INTO Reviews (MovieId, ReviewerName, Score, Comment, CreatedAt)
+VALUES (1, 'Test', 99, 'fuori range', GETDATE());
+-- -> Msg 547: The INSERT statement conflicted with the CHECK constraint "CK_Review_Score".
+```
+
+Il `CK_Review_Score` del [capitolo 3](03-dal-dbcontext.md) **non c'è** nella copia. Quindi: una tabella nata da `SELECT INTO` è un contenitore di dati, **non una tabella equivalente**. Va benissimo per una fotografia temporanea; usarla per rimpiazzare l'originale significherebbe perdere tutte le difese in silenzio.
+
+L'`IDENTITY` invece **viene copiata**, e me ne sono accorto sbattendoci contro: provando a inserire nella copia con un `Id` esplicito è ricomparso il vecchio amico del [capitolo 6](06-bll-services.md):
+
+```
+Msg 544: Cannot insert explicit value for identity column in table 'ReviewsCopia'
+when IDENTITY_INSERT is set to OFF.
+```
+
+### `INSERT INTO ... SELECT` — la tabella esiste già
+
+Quando la destinazione c'è, si usa la forma normale dell'`INSERT` con una `SELECT` al posto dei `VALUES`:
+
+```sql
+INSERT INTO MoviesArchivio (Title, DurationMinutes, ReleaseDate)
+SELECT Title, DurationMinutes, ReleaseDate
+FROM Movies
+WHERE ReleaseDate < '2010-01-01';
+```
+
+Le colonne devono corrispondere per **numero e ordine** (i nomi nella `SELECT` non contano, conta la posizione). È la forma da usare quasi sempre: la destinazione l'ho creata io, con i vincoli che volevo, e ci sto solo mettendo dentro delle righe.
+
+### Provarle senza rischi
+
+Tutti gli esempi qui sopra li ho eseguiti **dentro una transazione poi annullata**, che è il modo sicuro di sperimentare (sezione 10.10):
+
+```sql
+BEGIN TRANSACTION;
+    SELECT Title INTO Prova FROM Movies;
+    SELECT COUNT(*) FROM Prova;      -- 6
+ROLLBACK;
+
+SELECT CASE WHEN OBJECT_ID('Prova') IS NULL THEN 'NO' ELSE 'SI' END AS EsisteAncora;
+-- NO
+```
+
+Dettaglio non ovvio e molto utile: **in SQL Server anche il DDL è transazionale**. Il `ROLLBACK` non annulla solo le righe, si porta via la **tabella intera**. Non è così dappertutto — in MySQL o Oracle un `CREATE TABLE` fa commit implicito e non si può disfare. Qui posso creare tabelle di prova senza lasciare traccia.
+
+### E in EF Core?
+
+Nessun equivalente: `SELECT INTO` crea tabelle, e creare tabelle non è mestiere di un ORM — è mestiere delle migration ([capitolo 13](13-migrations.md)). Il parente più vicino è la proiezione `.Select(m => new { ... })`, che però costruisce oggetti in C#, non tabelle in SQL ([capitolo 12](12-dal-controller-all-sql.md)). Per eseguirle da EF servirebbe `db.Database.ExecuteSqlRaw("SELECT ... INTO ...")`, cioè scavalcare l'ORM di proposito.
+
+---
+
 ## (?) Che cosa è una transazione? (e cosa c'entra la Unit of Work)
 
 Una **transazione** è un blocco di operazioni che vale come una sola: o vanno a buon fine **tutte**, o è come se non fosse successo niente (`ROLLBACK`). È la proprietà che impedisce di restare a metà — il classico bonifico che esce da un conto ma non entra nell'altro.
@@ -608,6 +844,8 @@ E qui si chiude il cerchio con il [capitolo 4](04-dal-repository-unitofwork.md):
 ## 10.11 Come EF Core traduce: da LINQ a SQL
 
 Il vantaggio di sapere l'SQL è capire cosa combina l'ORM. Con la configurazione di log di questo progetto, **EF stampa in console ogni query che esegue**. Avviando l'app si vede scorrere l'SQL vero.
+
+> Questa sezione è l'assaggio; il discorso completo — quando parte davvero una query, quale metodo la fa partire, il catalogo delle traduzioni LINQ → SQL — è nel [capitolo 12](12-dal-controller-all-sql.md).
 
 Esempi presi dal log reale:
 
@@ -640,7 +878,7 @@ Quest'ultimo merita attenzione, perché racconta due cose in tre righe:
 
 Le parentesi quadre `[...]` sono la delimitazione dei nomi in T-SQL: servono quando un nome coincide con una parola riservata. `@p`, `@p0`... sono **parametri**: EF non incolla mai i valori dentro la stringa SQL, li passa a parte. È ciò che rende impossibile la **SQL injection** — lo stesso motivo per cui in Java usavo `PreparedStatement` invece di concatenare stringhe.
 
-> ⚠️ Attenzione a `AVG` anche da EF: `_dbSet.Average(r => r.Score)` su una colonna `int` viene tradotto in `AVG` di interi e soffre esattamente del troncamento visto nella sezione 10.5.
+> **E da EF?** Verrebbe da pensare che `_dbSet.Average(r => r.Score)` soffra dello stesso troncamento della sezione 10.5. **Non è così**: EF traduce in `AVG(CAST([r].[Score] AS float))`, mettendo il `CAST` da solo, e restituisce **8,75**. Il tranello dell'`AVG` intero è dell'SQL scritto a mano, non dell'ORM — il confronto affiancato è nel [capitolo 12](12-dal-controller-all-sql.md).
 
 ---
 
@@ -729,7 +967,7 @@ dotnet run --project MovieManager.PL.API
 
 Il `SET SINGLE_USER WITH ROLLBACK IMMEDIATE` chiude le connessioni ancora aperte: senza, il `DROP DATABASE` fallisce dicendo che il database è in uso.
 
-> **Perché serve il `DROP` e non basta riavviare?** Perché `EnsureCreated()` crea lo schema solo se il database **non esiste**: non aggiorna uno schema già presente. Se modifico un'entità, la modifica si vede solo dopo aver eliminato il database (o passando alle migrations). È il limite già segnalato nel [capitolo 3](03-dal-dbcontext.md).
+> **Perché serve il `DROP` e non basta riavviare?** Perché `EnsureCreated()` crea lo schema solo se il database **non esiste**: non aggiorna uno schema già presente. Se modifico un'entità, la modifica si vede solo dopo aver eliminato il database. È il limite già segnalato nel [capitolo 3](03-dal-dbcontext.md), ed è **esattamente il problema che risolvono le migration**: con quelle, la stessa modifica diventa un `ALTER TABLE` e i dati restano al loro posto. Il confronto completo, comandi compresi, è nel [capitolo 13](13-migrations.md).
 
 ---
 

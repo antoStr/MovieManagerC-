@@ -4,8 +4,11 @@
 
  Questo file e' il prontuario: comandi da copiare, senza spiegazioni.
  Le spiegazioni stanno nella documentazione:
-   docs/10-database-sql-server.md  -> il database, SQL dalle basi alle join
-   docs/11-scalar-e-prova-api.md   -> Scalar e la prova delle API
+   docs/10-database-sql-server.md      -> il database, SQL dalle basi alle join
+   docs/11-scalar-e-prova-api.md       -> Scalar e la prova delle API
+   docs/12-dal-controller-all-sql.md   -> il flusso, LINQ -> SQL, i metodi To*
+   docs/13-migrations.md               -> le migration
+   docs/14-sql-server-e-ssms.md        -> SSMS e SQL Server come si usano al lavoro
 
  API .......... http://localhost:5140
  Scalar ....... http://localhost:5140/scalar
@@ -25,6 +28,9 @@
   10. SQL diretto con sqlcmd
   11. Reset del database
   12. Cose da sapere (errori tipici e trappole)
+  13. Migration (dotnet ef)          <- il progetto NON le usa: vedi docs/13
+  14. SQL Server "vero", SSMS e stringhe di connessione
+      (SSMS funziona gia' ora con LocalDB: non serve installare SQL Server)
 
 
 ================================================================================
@@ -424,6 +430,37 @@
 
    sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -Q "SET IDENTITY_INSERT Actors ON; INSERT INTO Actors (Id, FirstName, LastName) VALUES (500, 'Test', 'Test'); SET IDENTITY_INSERT Actors OFF;"
 
+ ---- SELECT INTO: crea una tabella nuova dal risultato di una query ----
+
+ La tabella di destinazione NON deve esistere: la crea l'istruzione.
+ Utile per farsi una copia di sicurezza al volo prima di esperimenti.
+
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -W -Q "SELECT Title, DurationMinutes, ReleaseDate INTO MoviesLunghi FROM Movies WHERE DurationMinutes > 150; SELECT * FROM MoviesLunghi;"
+
+   # copia completa di una tabella
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -Q "SELECT * INTO Movies_Backup FROM Movies;"
+
+   # e per buttarla
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -Q "DROP TABLE Movies_Backup;"
+
+ ATTENZIONE: SELECT INTO copia SOLO struttura, dati e IDENTITY.
+ NON copia chiave primaria, foreign key, indici e check constraint. Nella
+ copia di Reviews un punteggio 99 verrebbe ACCETTATO (nella tabella vera no,
+ errore 547). Va bene per una fotografia temporanea, non come rimpiazzo.
+
+ ---- INSERT INTO ... SELECT: copia righe in una tabella che ESISTE gia' ----
+
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -Q "INSERT INTO MoviesArchivio (Title, DurationMinutes, ReleaseDate) SELECT Title, DurationMinutes, ReleaseDate FROM Movies WHERE ReleaseDate < '2010-01-01';"
+
+ Le colonne devono corrispondere per numero e ordine (i nomi non contano).
+
+ ---- Provare SELECT INTO senza lasciare traccia ----
+
+ In SQL Server anche il DDL e' transazionale: il ROLLBACK si porta via pure
+ la tabella appena creata.
+
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -W -Q "SET NOCOUNT ON; BEGIN TRANSACTION; SELECT Title INTO Prova FROM Movies; SELECT COUNT(*) AS Righe FROM Prova; ROLLBACK; SELECT CASE WHEN OBJECT_ID('Prova') IS NULL THEN 'NO' ELSE 'SI' END AS EsisteAncora;"
+
 
 ================================================================================
  11. RESET DEL DATABASE
@@ -535,3 +572,226 @@
 
  --- L'avviso "Failed to determine the https port for redirect" ---
  E' innocuo: non e' configurata una porta HTTPS e si usa http://localhost:5140.
+
+ --- I numeri di errore SQL che puoi incontrare ---
+   544  -> "Cannot insert explicit value for identity column"  (Id imposto a mano)
+   547  -> foreign key o check constraint violati               -> l'API traduce in 400
+   2627 -> chiave primaria / indice unico duplicati             -> l'API traduce in 409
+   2714 -> "There is already an object named 'X' in the database"
+           (esce applicando le migration a un DB nato da EnsureCreated: vedi 13)
+
+
+================================================================================
+ 13. MIGRATION (DOTNET EF)
+================================================================================
+
+ ATTENZIONE: questo progetto NON usa le migration. Usa EnsureCreated() in
+ Program.cs e la cartella Migrations/ non esiste. Questi comandi sono qui
+ perche' servono nel momento in cui volessi convertirlo (o su altri progetti).
+ Il perche' di ogni comando e le trappole stanno in docs/13-migrations.md.
+
+ --- Preparazione (una volta sola) ---
+
+   # lo strumento: e' un tool globale, non e' incluso nell'SDK
+   dotnet tool install --global dotnet-ef
+   dotnet ef --version
+
+   # il pacchetto per gli strumenti, nel progetto di AVVIO
+   dotnet add MovieManager.PL.API package Microsoft.EntityFrameworkCore.Design --version 10.0.9
+
+   # ATTENZIONE, specifico di questo progetto: serve il provider ANCHE nel DAL,
+   # altrimenti la solution non compila piu' (error CS0103 su
+   # SqlServerModelBuilderExtensions). Il motivo: DbContext nel DAL, provider
+   # nel PL. Vedi docs/13-migrations.md sezione 13.1.
+   dotnet add MovieManager.DAL package Microsoft.EntityFrameworkCore.SqlServer --version 10.0.9
+
+ --- In questo progetto ogni comando vuole questi due parametri ---
+
+   --project MovieManager.DAL --startup-project MovieManager.PL.API
+
+   --project         = dove finiscono le migration (dov'e' il DbContext)
+   --startup-project = dove si avvia l'app (dov'e' la stringa di connessione)
+
+ --- I comandi ---
+
+   # creare una migration (NON tocca il database: confronta modello e snapshot)
+   dotnet ef migrations add InitialCreate --project MovieManager.DAL --startup-project MovieManager.PL.API
+
+   # elencare le migration e vedere quali sono (Pending)
+   dotnet ef migrations list --project MovieManager.DAL --startup-project MovieManager.PL.API
+
+   # applicare tutte quelle mancanti
+   dotnet ef database update --project MovieManager.DAL --startup-project MovieManager.PL.API
+
+   # tornare a una migration precedente (rollback)
+   dotnet ef database update InitialCreate --project MovieManager.DAL --startup-project MovieManager.PL.API
+
+   # disfare tutto
+   dotnet ef database update 0 --project MovieManager.DAL --startup-project MovieManager.PL.API
+
+   # cancellare l'ultima migration NON ancora applicata
+   dotnet ef migrations remove --project MovieManager.DAL --startup-project MovieManager.PL.API
+
+   # generare l'SQL invece di applicarlo (--idempotent = rieseguibile senza danni)
+   dotnet ef migrations script --idempotent --project MovieManager.DAL --startup-project MovieManager.PL.API
+   dotnet ef migrations script --idempotent --output migrazione.sql --project MovieManager.DAL --startup-project MovieManager.PL.API
+
+   # su quale database sto per lavorare?  (da lanciare PRIMA dei comandi che scrivono)
+   dotnet ef dbcontext info --project MovieManager.DAL --startup-project MovieManager.PL.API
+
+   # eliminare il database
+   dotnet ef database drop --project MovieManager.DAL --startup-project MovieManager.PL.API
+
+ --- Lavorare su un database diverso da quello di appsettings.json ---
+ Utile per provare senza toccare MovieManagerDb. Vale per update/list/drop,
+ NON per "migrations add" (che non tocca il database e rifiuta il parametro):
+
+   dotnet ef database update --project MovieManager.DAL --startup-project MovieManager.PL.API `
+     --connection "Server=(localdb)\MSSQLLocalDB;Database=MovieManagerDb_Test;Trusted_Connection=True;TrustServerCertificate=True"
+
+ --- Guardare lo storico delle migration ---
+
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -Q "SELECT MigrationId, ProductVersion FROM __EFMigrationsHistory;" -W
+
+ --- La riga da cambiare in Program.cs, se converti ---
+
+   // db.Database.EnsureCreated();          // prima
+   await db.Database.MigrateAsync();        // dopo
+
+
+================================================================================
+ 14. SQL SERVER "VERO", SSMS E STRINGHE DI CONNESSIONE
+================================================================================
+
+ Spiegazioni complete: docs/14-sql-server-e-ssms.md
+
+ IMPORTANTE: SSMS funziona GIA' ORA con LocalDB. Non serve installare SQL
+ Server per imparare a usarlo: installi SSMS, metti (localdb)\MSSQLLocalDB
+ come server name e hai davanti MovieManagerDb con tutte le sue tabelle.
+
+ --- Cosa c'e' su questa macchina? ---
+
+   sqllocaldb info                                    # istanze LocalDB
+   Get-Service | Where-Object Name -like "MSSQL*"     # servizi SQL Server (se vuoto: solo LocalDB)
+   (Get-Command sqlcmd).Source                        # dov'e' sqlcmd
+
+ --- Installare (SERVE UN TERMINALE COME AMMINISTRATORE) ---
+
+   winget install Microsoft.SQLServerManagementStudio   # SSMS: e' questo che serve davvero
+   winget install Microsoft.SQLServer.2022.Express      # il motore: gratuito, ok in produzione
+   winget install Microsoft.SQLServer.2022.Developer    # il motore: completo, solo sviluppo/test
+
+ --- Gestire il servizio (dopo l'installazione) ---
+
+   Get-Service | Where-Object Name -like "MSSQL*" | Select-Object Name, Status
+   Start-Service "MSSQL`$SQLEXPRESS"        # il backtick protegge il $ in PowerShell
+   Stop-Service  "MSSQL`$SQLEXPRESS"
+   sqlcmd -S ".\SQLEXPRESS" -Q "SELECT @@VERSION;"
+
+ --- SSMS: cosa mettere nella finestra di connessione ---
+
+   Server name:    (localdb)\MSSQLLocalDB     <- funziona SUBITO, senza installare SQL Server
+                   .\SQLEXPRESS               <- se hai installato Express
+                   localhost                  <- istanza predefinita
+                   SRV-DATI  /  192.168.1.50,1433   <- un server in rete
+   Authentication: Windows Authentication     <- usa il tuo account Windows, niente password
+                   SQL Server Authentication  <- utente+password gestiti da SQL Server
+   Trust server certificate: spuntato (in locale; su un server vero NO)
+
+ --- SSMS: le scorciatoie che userai tutto il giorno ---
+
+   F5              esegui. Se hai SELEZIONATO del testo, esegue SOLO quello <- la piu' utile
+   Ctrl+N          nuova finestra query
+   Ctrl+M          attiva il piano di esecuzione
+   Ctrl+R          mostra/nascondi la griglia dei risultati
+   Alt+F1          su un nome di tabella selezionato: ne mostra la struttura
+
+   ATTENZIONE: la query gira sul database scelto nella TENDINA IN ALTO, non su
+   quello evidenziato nell'Object Explorer. Nel dubbio scrivilo nella query:
+     USE MovieManagerDb;
+     GO
+
+   ATTENZIONE: "Edit Top 200 Rows" scrive nel database appena esci dalla cella.
+   Nessuna conferma, nessun rollback. E non usare MAI "Design" per cambiare una
+   colonna: in un progetto con EF lo schema si cambia dalle entita' C#.
+
+ --- Le domande di ogni giorno, in T-SQL ---
+
+   EXEC sp_help 'Movies';        # com'e' fatta questa tabella
+   EXEC sp_spaceused;            # quanto occupa il database
+   EXEC sp_who2;                 # chi e' collegato e chi blocca chi
+   SELECT @@VERSION;             # che versione e'
+   SELECT @@TRANCOUNT;           # ho lasciato una transazione aperta? (se != 0: si')
+
+   # chi e' collegato adesso
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -W -Q "SET NOCOUNT ON; SELECT session_id, login_name, DB_NAME(database_id) AS DbName, status FROM sys.dm_exec_sessions WHERE is_user_process = 1;"
+
+   # chi sta bloccando chi  <- risolve il 90% dei "va lento"
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -W -Q "SET NOCOUNT ON; SELECT session_id, status, wait_type, blocking_session_id FROM sys.dm_exec_requests WHERE session_id <> @@SPID;"
+
+ --- Piano di esecuzione: Seek (buono) o Scan (legge tutto)? ---
+
+ In SSMS: Ctrl+M e poi F5. Da sqlcmd serve un file, perche' vuole i GO separati:
+
+   # scrivi un file piano.sql con:
+   #   SET SHOWPLAN_TEXT ON;
+   #   GO
+   #   SELECT Title FROM Movies WHERE Id = 3;
+   #   GO
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -i piano.sql -W -h -1
+
+ Quanto costa davvero una query (guarda "logical reads", non il tempo):
+
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -d MovieManagerDb -Q "SET STATISTICS IO ON; SELECT m.Title, g.Name FROM Movies m JOIN Genres g ON g.Id = m.GenreId;"
+
+ --- Backup e restore ---
+
+   # backup (WITH INIT sovrascrive invece di accodarsi)
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -Q "BACKUP DATABASE MovieManagerDb TO DISK = N'C:\temp\MovieManagerDb.bak' WITH INIT, FORMAT;"
+
+   # cosa c'e' dentro il .bak (serve per sapere i nomi logici del MOVE)
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -Q "RESTORE FILELISTONLY FROM DISK = N'C:\temp\MovieManagerDb.bak';"
+
+   # restore CON UN NOME NUOVO: non tocca l'originale.
+   # WITH MOVE e' obbligatorio, altrimenti va a sbattere sui file del DB vivo.
+   sqlcmd -S "(localdb)\MSSQLLocalDB" -Q "RESTORE DATABASE MovieManagerDb_Restored FROM DISK = N'C:\temp\MovieManagerDb.bak' WITH MOVE 'MovieManagerDb' TO N'C:\temp\r.mdf', MOVE 'MovieManagerDb_log' TO N'C:\temp\r.ldf';"
+
+ Per recuperare UN dato cancellato per sbaglio: NON ripristinare sopra il
+ database vivo. Ripristina ACCANTO con un altro nome, tira fuori la riga con
+ una SELECT e reinseriscila.
+
+ --- Stringhe di connessione (appsettings.json -> ConnectionStrings:DefaultConnection) ---
+
+   LocalDB (quella attuale):
+     Server=(localdb)\MSSQLLocalDB;Database=MovieManagerDb;Trusted_Connection=True;TrustServerCertificate=True
+
+   Express in locale, autenticazione Windows:
+     Server=.\SQLEXPRESS;Database=MovieManagerDb;Trusted_Connection=True;TrustServerCertificate=True
+
+   Istanza predefinita in locale:
+     Server=localhost;Database=MovieManagerDb;Trusted_Connection=True;TrustServerCertificate=True
+
+   Login SQL (utente e password):
+     Server=localhost;Database=MovieManagerDb;User Id=movieapp;Password=***;TrustServerCertificate=True
+
+   Server remoto con porta:
+     Server=192.168.1.50,1433;Database=MovieManagerDb;User Id=movieapp;Password=***;Encrypt=True
+
+ Cambiata la stringa, basta riavviare: EnsureCreated() ricrea il database sulla
+ nuova istanza e il seeder lo ripopola. Nessun'altra riga di codice da toccare.
+
+ --- Creare un login SQL dedicato (non usare mai 'sa' per l'app) ---
+
+   CREATE LOGIN movieapp WITH PASSWORD = 'UnaPasswordSolida!123';
+   USE MovieManagerDb;
+   CREATE USER movieapp FOR LOGIN movieapp;
+   ALTER ROLE db_datareader ADD MEMBER movieapp;
+   ALTER ROLE db_datawriter ADD MEMBER movieapp;
+
+ --- Le password NON vanno in appsettings.json (finisce su Git) ---
+
+   dotnet user-secrets init --project MovieManager.PL.API
+   dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Server=...;Password=..." --project MovieManager.PL.API
+
+ Con Trusted_Connection=True il problema non esiste: nella stringa non c'e'
+ nessun segreto. E' un motivo in piu' per preferire l'autenticazione Windows.
